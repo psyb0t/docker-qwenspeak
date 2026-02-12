@@ -75,13 +75,6 @@ docker run -d \
 ssh -p 2222 tts@localhost "tts list-speakers"
 ```
 
-### run.sh
-
-```bash
-cat ~/.ssh/id_rsa.pub > authorized_keys
-MODELS_DIR=/path/to/your/models PORT=2222 ./run.sh
-```
-
 ## Allowed Commands
 
 | Command | Description |
