@@ -1,4 +1,4 @@
-# docker-qwen3-tts
+# docker-qwenspeak
 
 [Docker Hub](https://hub.docker.com/r/psyb0t/qwenspeak)
 
