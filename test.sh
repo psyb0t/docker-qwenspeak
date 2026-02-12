@@ -69,23 +69,6 @@ run_test() {
     fail "$name" "$output"
 }
 
-# run_test_negative <test_name> <ssh_command> <grep_pattern_that_should_NOT_match>
-run_test_negative() {
-    local name="$1"
-    local cmd="$2"
-    local pattern="$3"
-
-    local output
-    output=$(ssh_cmd "$cmd")
-
-    if echo "$output" | grep -q "$pattern"; then
-        fail "$name" "$output"
-        return
-    fi
-
-    pass "$name"
-}
-
 echo "=== Building test image ==="
 make build-test
 
@@ -117,47 +100,53 @@ for i in $(seq 1 30); do
 done
 sleep 1
 
+# --- table-driven tests ---
+# format: "command|pattern|flags|test name"
+# flags: i = case insensitive, empty = default
+
+TESTS=(
+    # main help
+    "tts --help|usage:|i|tts help shows usage"
+    "tts --help|custom-voice||tts help shows custom-voice"
+    "tts --help|voice-design||tts help shows voice-design"
+    "tts --help|voice-clone||tts help shows voice-clone"
+    "tts --help|list-speakers||tts help shows list-speakers"
+    "tts --help|tokenize||tts help shows tokenize"
+    "tts --help|models-dir||tts help shows --models-dir"
+
+    # subcommand help
+    "tts custom-voice --help|speaker||custom-voice shows --speaker"
+    "tts custom-voice --help|instruct||custom-voice shows --instruct"
+    "tts custom-voice --help|language||custom-voice shows --language"
+    "tts custom-voice --help|output||custom-voice shows --output"
+    "tts voice-design --help|instruct||voice-design shows --instruct"
+    "tts voice-clone --help|ref-audio||voice-clone shows --ref-audio"
+    "tts voice-clone --help|ref-text||voice-clone shows --ref-text"
+    "tts voice-clone --help|x-vector-only||voice-clone shows --x-vector-only"
+    "tts tokenize --help|audio||tokenize shows audio arg"
+
+    # list-speakers
+    "tts list-speakers|Available speakers||list-speakers runs"
+    "tts list-speakers|Vivian||list-speakers shows Vivian"
+    "tts list-speakers|Ryan||list-speakers shows Ryan"
+    "tts list-speakers|Aiden||list-speakers shows Aiden"
+    "tts list-speakers|Sohee||list-speakers shows Sohee"
+    "tts list-speakers|Ono_Anna||list-speakers shows Ono_Anna"
+
+    # error handling
+    "tts|usage:|i|no subcommand shows help"
+    "tts yolo|invalid choice\|error|i|bad subcommand errors"
+    "tts custom-voice|required\|error|i|custom-voice missing text errors"
+    "tts voice-clone test|required\|error|i|voice-clone missing ref-audio errors"
+)
+
 echo ""
-echo "=== Testing tts command help ==="
+echo "=== Running tests ==="
 
-#                  name                              command                                         pattern
-run_test           "tts help shows usage"            "tts --help"                                    "usage:" "i"
-run_test           "tts help shows custom-voice"     "tts --help"                                    "custom-voice"
-run_test           "tts help shows voice-design"     "tts --help"                                    "voice-design"
-run_test           "tts help shows voice-clone"      "tts --help"                                    "voice-clone"
-run_test           "tts help shows list-speakers"    "tts --help"                                    "list-speakers"
-run_test           "tts help shows tokenize"         "tts --help"                                    "tokenize"
-run_test           "tts help shows --models-dir"     "tts --help"                                    "models-dir"
-
-echo ""
-echo "=== Testing subcommand help ==="
-
-run_test           "custom-voice help"               "tts custom-voice --help"                       "speaker"
-run_test           "custom-voice shows --instruct"   "tts custom-voice --help"                       "instruct"
-run_test           "custom-voice shows --language"   "tts custom-voice --help"                       "language"
-run_test           "custom-voice shows --output"     "tts custom-voice --help"                       "output"
-run_test           "voice-design help"               "tts voice-design --help"                       "instruct"
-run_test           "voice-clone help"                "tts voice-clone --help"                        "ref-audio"
-run_test           "voice-clone shows --ref-text"    "tts voice-clone --help"                        "ref-text"
-run_test           "voice-clone shows --x-vector"    "tts voice-clone --help"                        "x-vector-only"
-run_test           "tokenize help"                   "tts tokenize --help"                           "audio"
-
-echo ""
-echo "=== Testing list-speakers ==="
-
-run_test           "list-speakers runs"              "tts list-speakers"                             "Available speakers"
-run_test           "list-speakers shows Vivian"      "tts list-speakers"                             "Vivian"
-run_test           "list-speakers shows Ryan"        "tts list-speakers"                             "Ryan"
-run_test           "list-speakers shows Aiden"       "tts list-speakers"                             "Aiden"
-run_test           "list-speakers shows Sohee"       "tts list-speakers"                             "Sohee"
-
-echo ""
-echo "=== Testing error handling ==="
-
-run_test           "no subcommand shows help"        "tts"                                           "usage:" "i"
-run_test           "bad subcommand errors"           "tts yolo"                                      "invalid choice\|error" "i"
-run_test           "custom-voice no text errors"     "tts custom-voice"                              "required\|error" "i"
-run_test           "voice-clone no ref-audio errors" "tts voice-clone test"                          "required\|error" "i"
+for entry in "${TESTS[@]}"; do
+    IFS='|' read -r cmd pattern flags name <<< "$entry"
+    run_test "$name" "$cmd" "$pattern" "$flags"
+done
 
 echo ""
 echo "================================"
