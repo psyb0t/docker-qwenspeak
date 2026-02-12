@@ -1,6 +1,6 @@
 # docker-qwenspeak
 
-[Docker Hub](https://hub.docker.com/r/psyb0t/qwenspeak)
+[![Docker Hub](https://img.shields.io/docker/v/psyb0t/qwenspeak?sort=semver&label=Docker%20Hub)](https://hub.docker.com/r/psyb0t/qwenspeak)
 
 Qwen3-TTS text-to-speech over SSH. Pick a voice, clone a voice, design a voice - all through a single `tts` command. Models run locally, no API keys, no cloud bullshit.
 
