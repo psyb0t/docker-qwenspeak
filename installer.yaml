@@ -1,0 +1,10 @@
+name: qwenspeak
+image: psyb0t/qwenspeak
+repo: psyb0t/docker-qwenspeak
+
+volumes:
+  - flag: -m
+    env: MODELS_DIR
+    mount: /models:ro
+    default: ./models
+    description: Models directory

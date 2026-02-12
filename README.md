@@ -51,6 +51,35 @@ Expected directory layout:
 
 ## Quick Start
 
+### install.sh (Recommended)
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/psyb0t/docker-qwenspeak/main/install.sh | sudo bash
+```
+
+This sets up `~/.qwenspeak/` with the docker-compose file, authorized_keys, and work directory, then drops a `qwenspeak` command into `/usr/local/bin`.
+
+Add your SSH key, point it at your models, and start it:
+
+```bash
+cat ~/.ssh/id_rsa.pub >> ~/.qwenspeak/authorized_keys
+qwenspeak start -d -m /path/to/your/models
+```
+
+```bash
+qwenspeak start -d                        # foreground or detached
+qwenspeak start -d -p 2223                # custom port (default 2222)
+qwenspeak start -d -m /mnt/hdd/models     # custom models directory
+qwenspeak start -d -r 4g -s 2g -c 4       # 4GB RAM, 2GB swap, 4 CPUs
+qwenspeak stop                             # stop
+qwenspeak upgrade                          # pull latest image, asks to stop/restart if running
+qwenspeak uninstall                        # stop and remove everything
+qwenspeak status                           # show status
+qwenspeak logs                             # show logs
+```
+
+All flags persist to `~/.qwenspeak/.env` - next `start` reuses the last values.
+
 ### docker run
 
 ```bash
