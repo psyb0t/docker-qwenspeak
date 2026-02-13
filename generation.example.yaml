@@ -1,0 +1,56 @@
+# Qwen3-TTS generation config
+# Pipe this to tts via stdin: ssh tts@host "tts" < generation.example.yaml
+
+# Global settings (apply to all steps unless overridden)
+device: cpu
+dtype: float32             # float32, float16, bfloat16 (float16/bfloat16 GPU only)
+models_dir: /models
+flash_attn: false          # FlashAttention-2 (GPU only)
+
+# Generation defaults (override per-step or per-generation)
+temperature: 0.9
+top_k: 50
+top_p: 1.0
+repetition_penalty: 1.05
+max_new_tokens: 2048
+streaming: false
+no_sample: false           # true = greedy decoding
+
+steps:
+  # --- custom-voice: preset speakers with optional emotion control ---
+  - mode: custom-voice
+    model_size: 1.7b       # 1.7b or 0.6b
+    speaker: Ryan          # step default speaker
+    language: English      # step default language
+    generate:
+      - text: "Hello world"
+        output: hello.wav
+      - text: "I cannot believe this!"
+        speaker: Vivian    # override step speaker
+        instruct: "Speak angrily"   # emotion/style (1.7B only)
+        output: angry.wav
+
+  # --- voice-design: describe the voice in natural language ---
+  - mode: voice-design
+    # model_size is always 1.7b for voice-design
+    generate:
+      - text: "Welcome to our store."
+        instruct: "A warm, friendly young female voice with a cheerful tone"
+        language: English
+        output: welcome.wav
+
+  # --- voice-clone: clone a voice from reference audio ---
+  - mode: voice-clone
+    model_size: 1.7b       # 1.7b or 0.6b
+    ref_audio: /work/ref.wav        # step default (prompt reuse when shared)
+    ref_text: "Transcript of ref"   # required unless x_vector_only
+    language: Auto
+    generate:
+      - text: "First line in cloned voice"
+        output: clone1.wav
+      - text: "Second line"
+        output: clone2.wav
+      - text: "Different reference"
+        ref_audio: /work/other.wav  # override ref for this one
+        x_vector_only: true         # no transcript needed
+        output: clone3.wav

@@ -107,23 +107,20 @@ sleep 1
 TESTS=(
     # main help
     "tts --help|usage:|i|tts help shows usage"
-    "tts --help|custom-voice||tts help shows custom-voice"
-    "tts --help|voice-design||tts help shows voice-design"
-    "tts --help|voice-clone||tts help shows voice-clone"
+    "tts --help|print-yaml||tts help shows print-yaml"
     "tts --help|list-speakers||tts help shows list-speakers"
     "tts --help|tokenize||tts help shows tokenize"
     "tts --help|models-dir||tts help shows --models-dir"
 
-    # subcommand help
-    "tts custom-voice --help|speaker||custom-voice shows --speaker"
-    "tts custom-voice --help|instruct||custom-voice shows --instruct"
-    "tts custom-voice --help|language||custom-voice shows --language"
-    "tts custom-voice --help|output||custom-voice shows --output"
-    "tts voice-design --help|instruct||voice-design shows --instruct"
-    "tts voice-clone --help|ref-audio||voice-clone shows --ref-audio"
-    "tts voice-clone --help|ref-text||voice-clone shows --ref-text"
-    "tts voice-clone --help|x-vector-only||voice-clone shows --x-vector-only"
-    "tts tokenize --help|audio||tokenize shows audio arg"
+    # print-yaml
+    "tts print-yaml|steps:||print-yaml shows steps"
+    "tts print-yaml|custom-voice||print-yaml shows custom-voice"
+    "tts print-yaml|voice-design||print-yaml shows voice-design"
+    "tts print-yaml|voice-clone||print-yaml shows voice-clone"
+    "tts print-yaml|temperature||print-yaml shows temperature"
+    "tts print-yaml|speaker||print-yaml shows speaker"
+    "tts print-yaml|ref_audio||print-yaml shows ref_audio"
+    "tts print-yaml|instruct||print-yaml shows instruct"
 
     # list-speakers
     "tts list-speakers|Available speakers||list-speakers runs"
@@ -133,11 +130,9 @@ TESTS=(
     "tts list-speakers|Sohee||list-speakers shows Sohee"
     "tts list-speakers|Ono_Anna||list-speakers shows Ono_Anna"
 
-    # error handling
-    "tts|usage:|i|no subcommand shows help"
-    "tts yolo|invalid choice\|error|i|bad subcommand errors"
-    "tts custom-voice|required\|error|i|custom-voice missing text errors"
-    "tts voice-clone test|required\|error|i|voice-clone missing ref-audio errors"
+    # tokenize help
+    "tts tokenize --help|audio||tokenize shows audio arg"
+    "tts tokenize --help|output||tokenize shows --output"
 )
 
 echo ""

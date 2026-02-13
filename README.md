@@ -2,18 +2,19 @@
 
 [![Docker Hub](https://img.shields.io/docker/v/psyb0t/qwenspeak?sort=semver&label=Docker%20Hub)](https://hub.docker.com/r/psyb0t/qwenspeak)
 
-Qwen3-TTS text-to-speech over SSH. Pick a voice, clone a voice, design a voice - all through a single `tts` command. Models run locally, no API keys, no cloud bullshit.
+Qwen3-TTS text-to-speech over SSH. Pick a voice, clone a voice, design a voice - all through a YAML config piped via stdin. Models run locally, no API keys, no cloud bullshit.
 
 Built on top of [psyb0t/lockbox](https://github.com/psyb0t/docker-lockbox) - see that repo for the security model, file operations, path sandboxing, and all the SSH lockdown details.
 
 ## Features
 
+- **YAML pipeline** - batch multiple generations across different models in one config
 - **9 premium speakers** - male/female voices across Chinese, English, Japanese, Korean
 - **Emotion/style control** - make any preset speaker happy, angry, sad, whatever
 - **Voice design** - describe the voice you want in plain English and it generates it
 - **Voice cloning** - clone any voice from a 3-second audio sample
 - **10 languages** - Chinese, English, Japanese, Korean, German, French, Russian, Portuguese, Spanish, Italian
-- **CPU** - runs on CPU out of the box, no GPU required
+- **CPU** - runs on CPU out of the box, no GPU required (yet)
 
 ## Models
 
@@ -22,7 +23,7 @@ You need to download models locally before running. Pick what you need:
 ```bash
 pip install -U "huggingface_hub[cli]"
 
-# Required: speech tokenizer (used by all models)
+# Speech tokenizer (used by all models)
 huggingface-cli download Qwen/Qwen3-TTS-Tokenizer-12Hz --local-dir ./Qwen3-TTS-Tokenizer-12Hz
 
 # CustomVoice: 9 preset speakers + emotion control
@@ -106,133 +107,193 @@ ssh -p 2222 tts@localhost "tts list-speakers"
 
 ## Allowed Commands
 
-| Command | Description |
-|---------|-------------|
+| Command | Description                                             |
+| ------- | ------------------------------------------------------- |
 | `tts`   | Text-to-speech generation (the only command, that's it) |
 
-## TTS Modes
+## How It Works
 
-### custom-voice - Preset Speakers
-
-Pick from 9 built-in voices. The 1.7B model supports emotion/style control via `--instruct`.
+All generation is driven by YAML configs piped via stdin. Get a template, fill it in, pipe it back.
 
 ```bash
-# Basic
-ssh tts@host "tts custom-voice 'Hello world' --speaker Ryan --language English"
+# Get the YAML template
+ssh tts@host "tts print-yaml" > job.yaml
 
-# With emotion (1.7B only)
-ssh tts@host "tts custom-voice 'I cannot believe this!' --speaker Vivian --instruct 'Speak angrily'"
+# Edit it
+vim job.yaml
 
-# Smaller model
-ssh tts@host "tts custom-voice 'Hello' --speaker Aiden --model-size 0.6b"
+# Run it
+ssh tts@host "tts" < job.yaml
+
+# Download results
+ssh tts@host "get hello.wav" > hello.wav
 ```
 
-### voice-design - Describe the Voice
+### YAML Config
 
-Tell it what voice you want in natural language. Only available as 1.7B.
+Each config has global settings and a list of steps. Each step loads a model, runs all its generations, then unloads it. Settings cascade: global → step → generation.
 
-```bash
-ssh tts@host "tts voice-design 'Welcome to our store.' --instruct 'A warm, friendly young female voice with a cheerful tone'"
+```yaml
+# Global settings
+device: cpu
+dtype: float32
+models_dir: /models
+flash_attn: false
 
-ssh tts@host "tts voice-design 'Breaking news today.' --instruct 'Deep authoritative male news anchor voice'"
+# Generation defaults
+temperature: 0.9
+top_k: 50
+top_p: 1.0
+repetition_penalty: 1.05
+max_new_tokens: 2048
+streaming: false
+no_sample: false
+
+steps:
+  - mode: custom-voice
+    model_size: 1.7b
+    speaker: Ryan
+    language: English
+    generate:
+      - text: "Hello world"
+        output: hello.wav
+      - text: "I cannot believe this!"
+        speaker: Vivian
+        instruct: "Speak angrily"
+        output: angry.wav
+
+  - mode: voice-design
+    generate:
+      - text: "Welcome to our store."
+        instruct: "A warm, friendly young female voice with a cheerful tone"
+        output: welcome.wav
+
+  - mode: voice-clone
+    model_size: 1.7b
+    ref_audio: /work/ref.wav
+    ref_text: "Transcript of reference"
+    generate:
+      - text: "First line in cloned voice"
+        output: clone1.wav
+      - text: "Second line"
+        output: clone2.wav
 ```
 
-### voice-clone - Clone Any Voice
+### TTS Modes
 
-Clone a voice from a reference audio file. Upload your reference first, then generate.
+**custom-voice** - Pick from 9 preset speakers. The 1.7B model supports emotion/style control via `instruct`.
 
-```bash
-# Upload reference audio
-ssh tts@host "put ref.wav" < my_voice.wav
+**voice-design** - Describe the voice in natural language via `instruct`. Only available as 1.7B.
 
-# Clone with transcript (ICL mode - best quality)
-ssh tts@host "tts voice-clone 'New text in my voice' --ref-audio /work/ref.wav --ref-text 'What I said in the ref clip'"
+**voice-clone** - Clone a voice from reference audio. Set `ref_audio` and `ref_text` at the step level to reuse the voice prompt across generations. Use `x_vector_only: true` to skip the transcript.
 
-# Clone without transcript (x-vector only - no transcript needed)
-ssh tts@host "tts voice-clone 'New text in my voice' --ref-audio /work/ref.wav --x-vector-only"
+### Batching
 
-# Smaller model
-ssh tts@host "tts voice-clone 'Hello' --ref-audio /work/ref.wav --x-vector-only --model-size 0.6b"
-```
+The YAML pipeline loads each model once and runs all its generations before moving on. Put all custom-voice generations in one step, all voice-clone generations in another, etc.
 
-**Emotion trick for cloned voices:** record yourself with different emotions and use the matching reference file:
+**Emotion trick for cloned voices:** upload reference files with different emotions and use separate steps:
 
 ```bash
+ssh tts@host "mkdir refs"
 ssh tts@host "put refs/happy.wav" < me_happy.wav
 ssh tts@host "put refs/angry.wav" < me_angry.wav
+```
 
-ssh tts@host "tts voice-clone 'Great news!' --ref-audio /work/refs/happy.wav --ref-text 'transcript' "
-ssh tts@host "tts voice-clone 'This is unacceptable' --ref-audio /work/refs/angry.wav --ref-text 'transcript'"
+```yaml
+steps:
+  - mode: voice-clone
+    ref_audio: /work/refs/happy.wav
+    ref_text: "transcript of happy ref"
+    generate:
+      - text: "Great news everyone!"
+        output: happy1.wav
+      - text: "I'm so glad to hear that"
+        output: happy2.wav
+
+  - mode: voice-clone
+    ref_audio: /work/refs/angry.wav
+    ref_text: "transcript of angry ref"
+    generate:
+      - text: "This is unacceptable"
+        output: angry1.wav
+```
+
+### Other Subcommands
+
+```bash
+# List available speakers
+ssh tts@host "tts list-speakers"
+
+# Tokenize round-trip (encode audio → speech tokens → decode back)
+ssh tts@host "tts tokenize input.wav"
 ```
 
 ## Available Speakers
 
-| Speaker | Gender | Language | Description |
-|---------|--------|----------|-------------|
-| Vivian | Female | Chinese | Bright, slightly edgy young voice |
-| Serena | Female | Chinese | Warm, gentle young voice |
-| Uncle_Fu | Male | Chinese | Seasoned, low mellow timbre |
-| Dylan | Male | Chinese | Youthful Beijing dialect, clear natural timbre |
-| Eric | Male | Chinese | Lively Chengdu/Sichuan dialect, slightly husky |
-| Ryan | Male | English | Dynamic with strong rhythmic drive |
-| Aiden | Male | English | Sunny American, clear midrange |
-| Ono_Anna | Female | Japanese | Playful, light nimble timbre |
-| Sohee | Female | Korean | Warm with rich emotion |
+| Speaker  | Gender | Language | Description                                    |
+| -------- | ------ | -------- | ---------------------------------------------- |
+| Vivian   | Female | Chinese  | Bright, slightly edgy young voice              |
+| Serena   | Female | Chinese  | Warm, gentle young voice                       |
+| Uncle_Fu | Male   | Chinese  | Seasoned, low mellow timbre                    |
+| Dylan    | Male   | Chinese  | Youthful Beijing dialect, clear natural timbre |
+| Eric     | Male   | Chinese  | Lively Chengdu/Sichuan dialect, slightly husky |
+| Ryan     | Male   | English  | Dynamic with strong rhythmic drive             |
+| Aiden    | Male   | English  | Sunny American, clear midrange                 |
+| Ono_Anna | Female | Japanese | Playful, light nimble timbre                   |
+| Sohee    | Female | Korean   | Warm with rich emotion                         |
 
-## Generation Options
+## YAML Options
 
-| Flag | Default | Description |
-|------|---------|-------------|
-| `--output`, `-o` | `output.wav` | Output file path (relative to /work) |
-| `--language`, `-l` | `Auto` | Language: Auto, Chinese, English, Japanese, Korean, German, French, Russian, Portuguese, Spanish, Italian |
-| `--model-size` | `1.7b` | Model size: 1.7b or 0.6b |
-| `--device` | `cpu` | Device: cpu, cuda:0, etc. |
-| `--dtype` | `float32` | Model dtype: float32, float16, bfloat16 (float16/bfloat16 GPU only) |
-| `--flash-attn` | off | Use FlashAttention-2 (GPU only) |
-| `--temperature` | `0.9` | Sampling temperature |
-| `--top-k` | `50` | Top-k sampling |
-| `--top-p` | `1.0` | Top-p / nucleus sampling |
-| `--repetition-penalty` | `1.05` | Repetition penalty |
-| `--max-new-tokens` | `2048` | Max codec tokens to generate |
-| `--no-sample` | off | Greedy decoding |
-| `--streaming` | off | Streaming mode (lower latency) |
+### Global / Step / Generation
+
+All of these can be set at any level. Lower levels override higher ones.
+
+| Field                | Default   | Description                                                         |
+| -------------------- | --------- | ------------------------------------------------------------------- |
+| `device`             | `cpu`     | Device: cpu, cuda:0, etc.                                           |
+| `dtype`              | `float32` | Model dtype: float32, float16, bfloat16 (float16/bfloat16 GPU only) |
+| `flash_attn`         | `false`   | Use FlashAttention-2 (GPU only)                                     |
+| `temperature`        | `0.9`     | Sampling temperature                                                |
+| `top_k`              | `50`      | Top-k sampling                                                      |
+| `top_p`              | `1.0`     | Top-p / nucleus sampling                                            |
+| `repetition_penalty` | `1.05`    | Repetition penalty                                                  |
+| `max_new_tokens`     | `2048`    | Max codec tokens to generate                                        |
+| `no_sample`          | `false`   | Greedy decoding                                                     |
+| `streaming`          | `false`   | Streaming mode (lower latency)                                      |
+
+### Step-only
+
+| Field        | Default  | Description                                      |
+| ------------ | -------- | ------------------------------------------------ |
+| `mode`       | required | `custom-voice`, `voice-design`, or `voice-clone` |
+| `model_size` | `1.7b`   | Model size: `1.7b` or `0.6b`                     |
+
+### Generation-specific
+
+| Field           | Used by                    | Description                                                   |
+| --------------- | -------------------------- | ------------------------------------------------------------- |
+| `text`          | all                        | Text to synthesize (required)                                 |
+| `output`        | all                        | Output file path relative to /work (required)                 |
+| `speaker`       | custom-voice               | Speaker name (default: Vivian)                                |
+| `language`      | all                        | Language (default: Auto)                                      |
+| `instruct`      | custom-voice, voice-design | Emotion/style instruction or voice description                |
+| `ref_audio`     | voice-clone                | Reference audio file path (required)                          |
+| `ref_text`      | voice-clone                | Transcript of reference audio (required unless x_vector_only) |
+| `x_vector_only` | voice-clone                | Use speaker embedding only, no transcript needed              |
 
 ## File Operations
 
 All file paths are relative to /work. Traversal attempts get blocked, absolute paths get remapped under /work.
 
-| Command | Description |
-|---------|-------------|
-| `put` | Upload file from stdin |
-| `get` | Download file to stdout |
-| `ls` | List /work or a subdirectory (`--json` for JSON output) |
-| `rm` | Delete a file |
-| `mkdir` | Create directory (recursive) |
-| `rmdir` | Remove empty directory |
-| `rrmdir` | Remove directory and everything in it recursively |
-
-## Usage Examples
-
-```bash
-# Generate and immediately play
-ssh tts@host "tts custom-voice 'Hello there' --speaker Ryan" && \
-ssh tts@host "get output.wav" | ffplay -nodisp -autoexit -
-
-# Generate and download
-ssh tts@host "tts custom-voice 'Check this out' --speaker Aiden --language English"
-ssh tts@host "get output.wav" > output.wav
-
-# List what's in the work dir
-ssh tts@host "ls"
-
-# Clean up
-ssh tts@host "rm output.wav"
-
-# Organize reference voices
-ssh tts@host "mkdir refs"
-ssh tts@host "put refs/neutral.wav" < my_neutral.wav
-ssh tts@host "put refs/happy.wav" < my_happy.wav
-```
+| Command  | Description                                             |
+| -------- | ------------------------------------------------------- |
+| `put`    | Upload file from stdin                                  |
+| `get`    | Download file to stdout                                 |
+| `ls`     | List /work or a subdirectory (`--json` for JSON output) |
+| `rm`     | Delete a file                                           |
+| `mkdir`  | Create directory (recursive)                            |
+| `rmdir`  | Remove empty directory                                  |
+| `rrmdir` | Remove directory and everything in it recursively       |
 
 ## SSH Client Config
 

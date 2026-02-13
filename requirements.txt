@@ -4,3 +4,4 @@ torchaudio
 qwen-tts==0.1.1
 soundfile
 numpy
+pyyaml

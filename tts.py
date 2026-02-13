@@ -1,67 +1,37 @@
 #!/usr/bin/env python3
-"""Qwen3-TTS: Full-featured text-to-speech with all models and options.
+"""Qwen3-TTS: YAML-driven text-to-speech pipeline.
 
-Supports three modes:
-  custom-voice  - Use one of 9 predefined premium speakers with optional emotion control
-  voice-design  - Describe the voice you want in natural language
-  voice-clone   - Clone a voice from a reference audio sample
+Pipe a YAML config via stdin to run multi-step TTS generation.
+Each step loads a model, runs all generations, then unloads it.
 
-Models are loaded from a local directory (default: /models), expected layout:
-  /models/
-    Qwen3-TTS-12Hz-1.7B-CustomVoice/
-    Qwen3-TTS-12Hz-0.6B-CustomVoice/
-    Qwen3-TTS-12Hz-1.7B-VoiceDesign/
-    Qwen3-TTS-12Hz-1.7B-Base/
-    Qwen3-TTS-12Hz-0.6B-Base/
-    Qwen3-TTS-Tokenizer-12Hz/
-
-Download models:
-    pip install -U "huggingface_hub[cli]"
-    huggingface-cli download Qwen/Qwen3-TTS-Tokenizer-12Hz --local-dir ./Qwen3-TTS-Tokenizer-12Hz
-    huggingface-cli download Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice --local-dir ./Qwen3-TTS-12Hz-1.7B-CustomVoice
-    huggingface-cli download Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign --local-dir ./Qwen3-TTS-12Hz-1.7B-VoiceDesign
-    huggingface-cli download Qwen/Qwen3-TTS-12Hz-1.7B-Base --local-dir ./Qwen3-TTS-12Hz-1.7B-Base
-    huggingface-cli download Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice --local-dir ./Qwen3-TTS-12Hz-0.6B-CustomVoice
-    huggingface-cli download Qwen/Qwen3-TTS-12Hz-0.6B-Base --local-dir ./Qwen3-TTS-12Hz-0.6B-Base
+Usage:
+  tts                    Read YAML from stdin, run pipeline
+  tts print-yaml         Print a template YAML config to stdout
+  tts list-speakers      List available preset speakers
+  tts tokenize <audio>   Encode/decode audio through the speech tokenizer
 
 Examples:
-  # CustomVoice - predefined speakers (CPU)
-  python main.py custom-voice "Hello, how are you?" --speaker Vivian --language English
+  # Dump template, edit it, run it
+  ssh tts@host "tts print-yaml" > job.yaml
+  vim job.yaml
+  ssh tts@host "tts" < job.yaml
 
-  # CustomVoice - with emotion instruction (1.7B only)
-  python main.py custom-voice "I can't believe this happened!" --speaker Ryan --instruct "Speak angrily"
+  # List speakers
+  ssh tts@host "tts list-speakers"
 
-  # CustomVoice - GPU with bfloat16
-  python main.py custom-voice "Hello!" --speaker Aiden --device cuda:0 --dtype bfloat16
-
-  # VoiceDesign - describe the voice in natural language
-  python main.py voice-design "Welcome to our store." \
-      --instruct "A warm, friendly young female voice with a cheerful tone"
-
-  # Voice cloning - clone from reference audio (ICL mode)
-  python main.py voice-clone "This is my cloned voice speaking." \
-      --ref-audio reference.wav --ref-text "Original text from the reference audio."
-
-  # Voice cloning - x-vector only mode (no transcript needed)
-  python main.py voice-clone "This is my cloned voice." \
-      --ref-audio reference.wav --x-vector-only
-
-  # Custom models directory
-  python main.py -m /mnt/hdd/models/qwen3-tts custom-voice "Hi!" --speaker Ryan
-
-  # List available speakers
-  python main.py list-speakers
-
-  # Encode/decode audio through the speech tokenizer
-  python main.py tokenize input.wav --output reconstructed.wav
+  # Tokenize round-trip
+  ssh tts@host "tts tokenize input.wav"
 """
 
 import argparse
+import gc
+import sys
 from pathlib import Path
 
 import numpy as np
 import soundfile
 import torch
+import yaml
 
 from qwen_tts import Qwen3TTSModel, Qwen3TTSTokenizer
 
@@ -72,12 +42,9 @@ from qwen_tts import Qwen3TTSModel, Qwen3TTSTokenizer
 DEFAULT_MODELS_DIR = "/models"
 
 MODELS = {
-    # CustomVoice models (predefined speakers)
     "custom-voice-1.7b": "Qwen3-TTS-12Hz-1.7B-CustomVoice",
     "custom-voice-0.6b": "Qwen3-TTS-12Hz-0.6B-CustomVoice",
-    # VoiceDesign model (natural language voice description)
     "voice-design-1.7b": "Qwen3-TTS-12Hz-1.7B-VoiceDesign",
-    # Base models (voice cloning)
     "base-1.7b": "Qwen3-TTS-12Hz-1.7B-Base",
     "base-0.6b": "Qwen3-TTS-12Hz-0.6B-Base",
 }
@@ -87,72 +54,140 @@ TOKENIZERS = {
 }
 
 SPEAKERS = [
-    "Vivian",     # Bright young female – Chinese
-    "Serena",     # Warm gentle female – Chinese
-    "Uncle_Fu",   # Seasoned low male – Chinese
-    "Dylan",      # Youthful Beijing male – Chinese
-    "Eric",       # Lively Chengdu male – Chinese (Sichuan)
-    "Ryan",       # Dynamic male – English
-    "Aiden",      # Sunny American male – English
-    "Ono_Anna",   # Playful female – Japanese
-    "Sohee",      # Warm female – Korean
+    "Vivian", "Serena", "Uncle_Fu", "Dylan", "Eric",
+    "Ryan", "Aiden", "Ono_Anna", "Sohee",
 ]
 
 LANGUAGES = [
-    "Auto",
-    "Chinese",
-    "English",
-    "Japanese",
-    "Korean",
-    "German",
-    "French",
-    "Russian",
-    "Portuguese",
-    "Spanish",
-    "Italian",
+    "Auto", "Chinese", "English", "Japanese", "Korean",
+    "German", "French", "Russian", "Portuguese", "Spanish", "Italian",
 ]
 
-# Default generation parameters matching upstream defaults
-DEFAULT_TEMPERATURE = 0.9
-DEFAULT_TOP_K = 50
-DEFAULT_TOP_P = 1.0
-DEFAULT_REPETITION_PENALTY = 1.05
-DEFAULT_MAX_NEW_TOKENS = 2048
+VALID_MODES = ["custom-voice", "voice-design", "voice-clone"]
+
+GENERATION_DEFAULTS = {
+    "temperature": 0.9,
+    "top_k": 50,
+    "top_p": 1.0,
+    "repetition_penalty": 1.05,
+    "max_new_tokens": 2048,
+    "streaming": False,
+    "no_sample": False,
+}
+
+GLOBAL_DEFAULTS = {
+    "device": "cpu",
+    "dtype": "float32",
+    "models_dir": DEFAULT_MODELS_DIR,
+    "flash_attn": False,
+    **GENERATION_DEFAULTS,
+}
+
+SPEAKER_INFO = {
+    "Vivian":   ("Female", "Chinese",  "Bright, slightly edgy young voice"),
+    "Serena":   ("Female", "Chinese",  "Warm, gentle young voice"),
+    "Uncle_Fu": ("Male",   "Chinese",  "Seasoned, low mellow timbre"),
+    "Dylan":    ("Male",   "Chinese",  "Youthful Beijing dialect, clear natural timbre"),
+    "Eric":     ("Male",   "Chinese",  "Lively Chengdu/Sichuan dialect, slightly husky"),
+    "Ryan":     ("Male",   "English",  "Dynamic with strong rhythmic drive"),
+    "Aiden":    ("Male",   "English",  "Sunny American, clear midrange"),
+    "Ono_Anna": ("Female", "Japanese", "Playful, light nimble timbre"),
+    "Sohee":    ("Female", "Korean",   "Warm with rich emotion"),
+}
+
+YAML_TEMPLATE = """\
+# Qwen3-TTS YAML config
+# Pipe this to tts via stdin: ssh tts@host "tts" < job.yaml
+
+# Global settings (apply to all steps unless overridden)
+device: cpu
+dtype: float32             # float32, float16, bfloat16 (float16/bfloat16 GPU only)
+models_dir: /models
+flash_attn: false          # FlashAttention-2 (GPU only)
+
+# Generation defaults (override per-step or per-generation)
+temperature: 0.9
+top_k: 50
+top_p: 1.0
+repetition_penalty: 1.05
+max_new_tokens: 2048
+streaming: false
+no_sample: false           # true = greedy decoding
+
+steps:
+  # --- custom-voice: preset speakers with optional emotion control ---
+  - mode: custom-voice
+    model_size: 1.7b       # 1.7b or 0.6b
+    speaker: Ryan          # step default speaker
+    language: English      # step default language (Auto, Chinese, English, Japanese, Korean, ...)
+    generate:
+      - text: "Hello world"
+        output: hello.wav
+      - text: "I cannot believe this!"
+        speaker: Vivian    # override step speaker
+        instruct: "Speak angrily"   # emotion/style (1.7B only)
+        output: angry.wav
+
+  # --- voice-design: describe the voice in natural language ---
+  - mode: voice-design
+    # model_size is always 1.7b for voice-design
+    generate:
+      - text: "Welcome to our store."
+        instruct: "A warm, friendly young female voice with a cheerful tone"
+        language: English
+        output: welcome.wav
+
+  # --- voice-clone: clone a voice from reference audio ---
+  - mode: voice-clone
+    model_size: 1.7b       # 1.7b or 0.6b
+    ref_audio: /work/ref.wav        # step default (prompt reuse when shared)
+    ref_text: "Transcript of ref"   # required unless x_vector_only
+    language: Auto
+    generate:
+      - text: "First line in cloned voice"
+        output: clone1.wav
+      - text: "Second line"
+        output: clone2.wav
+      - text: "Different reference"
+        ref_audio: /work/other.wav  # override ref for this one
+        x_vector_only: true         # no transcript needed
+        output: clone3.wav
+"""
 
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
+def die(msg: str) -> None:
+    print(f"Error: {msg}", file=sys.stderr)
+    sys.exit(1)
+
+
 def resolve_dtype(name: str) -> torch.dtype:
     mapping = {
-        "float16": torch.float16,
-        "fp16": torch.float16,
-        "bfloat16": torch.bfloat16,
-        "bf16": torch.bfloat16,
-        "float32": torch.float32,
-        "fp32": torch.float32,
+        "float16": torch.float16, "fp16": torch.float16,
+        "bfloat16": torch.bfloat16, "bf16": torch.bfloat16,
+        "float32": torch.float32, "fp32": torch.float32,
     }
     if name not in mapping:
-        raise ValueError(f"Unknown dtype '{name}'. Choose from: {list(mapping)}")
+        die(f"Unknown dtype '{name}'. Choose from: {list(mapping)}")
     return mapping[name]
 
 
 def resolve_model_path(models_dir: str, model_key: str) -> str:
-    """Resolve a model key (e.g. 'custom-voice-1.7b') to a local path."""
     subdir = MODELS[model_key]
     path = Path(models_dir) / subdir
     if not path.is_dir():
-        raise FileNotFoundError(f"Model not found: {path}")
+        die(f"Model not found: {path}")
     return str(path)
 
 
 def resolve_tokenizer_path(models_dir: str, variant: str) -> str:
-    """Resolve a tokenizer variant (e.g. '12hz') to a local path."""
     subdir = TOKENIZERS[variant]
     path = Path(models_dir) / subdir
     if not path.is_dir():
-        raise FileNotFoundError(f"Tokenizer not found: {path}")
+        die(f"Tokenizer not found: {path}")
     return str(path)
 
 
@@ -166,15 +201,22 @@ def load_model(model_path: str, device: str, dtype: torch.dtype, flash_attn: boo
     return model
 
 
-def generation_kwargs(args: argparse.Namespace) -> dict:
-    """Extract sampling / generation kwargs from parsed args."""
+def unload_model(model: Qwen3TTSModel) -> None:
+    del model
+    gc.collect()
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+
+
+def get_gen_kwargs(cfg: dict) -> dict:
     return {
-        "do_sample": not args.no_sample,
-        "temperature": args.temperature,
-        "top_k": args.top_k,
-        "top_p": args.top_p,
-        "repetition_penalty": args.repetition_penalty,
-        "max_new_tokens": args.max_new_tokens,
+        "do_sample": not cfg.get("no_sample", False),
+        "temperature": cfg.get("temperature", 0.9),
+        "top_k": cfg.get("top_k", 50),
+        "top_p": cfg.get("top_p", 1.0),
+        "repetition_penalty": cfg.get("repetition_penalty", 1.05),
+        "max_new_tokens": cfg.get("max_new_tokens", 2048),
+        "non_streaming_mode": not cfg.get("streaming", False),
     }
 
 
@@ -192,117 +234,223 @@ def save_audio(wavs: list[np.ndarray], sr: int, output: str) -> None:
             print(f"Saved: {path}  ({len(wav) / sr:.2f}s, {sr} Hz)")
 
 
+def merge_config(*layers: dict) -> dict:
+    """Merge config dicts, later layers override earlier ones. None values are skipped."""
+    merged = {}
+    for layer in layers:
+        if layer:
+            for k, v in layer.items():
+                if v is not None:
+                    merged[k] = v
+    return merged
+
+
+# ---------------------------------------------------------------------------
+# Generation functions
+# ---------------------------------------------------------------------------
+
+def gen_custom_voice(model: Qwen3TTSModel, cfg: dict) -> None:
+    text = cfg.get("text")
+    if not text:
+        die("custom-voice generation missing 'text'")
+
+    speaker = cfg.get("speaker", "Vivian")
+    if speaker not in SPEAKERS:
+        die(f"Unknown speaker '{speaker}'. Choose from: {SPEAKERS}")
+
+    language = cfg.get("language", "Auto")
+    instruct = cfg.get("instruct")
+    output = cfg.get("output")
+    if not output:
+        die("custom-voice generation missing 'output'")
+
+    model_size = cfg.get("model_size", "1.7b")
+    if model_size == "0.6b" and instruct:
+        print("Warning: 0.6B CustomVoice does not support instruct. Ignoring.")
+        instruct = None
+
+    kwargs = get_gen_kwargs(cfg)
+    wavs, sr = model.generate_custom_voice(
+        text=text,
+        speaker=speaker,
+        language=language,
+        instruct=instruct,
+        **kwargs,
+    )
+    save_audio(wavs, sr, output)
+
+
+def gen_voice_design(model: Qwen3TTSModel, cfg: dict) -> None:
+    text = cfg.get("text")
+    if not text:
+        die("voice-design generation missing 'text'")
+
+    instruct = cfg.get("instruct")
+    if not instruct:
+        die("voice-design generation missing 'instruct'")
+
+    language = cfg.get("language", "Auto")
+    output = cfg.get("output")
+    if not output:
+        die("voice-design generation missing 'output'")
+
+    kwargs = get_gen_kwargs(cfg)
+    wavs, sr = model.generate_voice_design(
+        text=text,
+        instruct=instruct,
+        language=language,
+        **kwargs,
+    )
+    save_audio(wavs, sr, output)
+
+
+def gen_voice_clone(model: Qwen3TTSModel, cfg: dict, prompt=None) -> None:
+    text = cfg.get("text")
+    if not text:
+        die("voice-clone generation missing 'text'")
+
+    output = cfg.get("output")
+    if not output:
+        die("voice-clone generation missing 'output'")
+
+    language = cfg.get("language", "Auto")
+    kwargs = get_gen_kwargs(cfg)
+
+    if prompt is not None:
+        wavs, sr = model.generate_voice_clone(
+            text=text,
+            language=language,
+            voice_clone_prompt=prompt,
+            **kwargs,
+        )
+    else:
+        ref_audio = cfg.get("ref_audio")
+        if not ref_audio:
+            die("voice-clone generation missing 'ref_audio'")
+
+        x_vector_only = cfg.get("x_vector_only", False)
+        ref_text = None if x_vector_only else cfg.get("ref_text")
+
+        if not x_vector_only and not ref_text:
+            die("voice-clone generation missing 'ref_text' (required unless x_vector_only: true)")
+
+        wavs, sr = model.generate_voice_clone(
+            text=text,
+            language=language,
+            ref_audio=ref_audio,
+            ref_text=ref_text,
+            x_vector_only_mode=x_vector_only,
+            **kwargs,
+        )
+    save_audio(wavs, sr, output)
+
+
+# ---------------------------------------------------------------------------
+# Pipeline
+# ---------------------------------------------------------------------------
+
+def run_step(step: dict, globals_cfg: dict) -> None:
+    mode = step.get("mode")
+    if mode not in VALID_MODES:
+        die(f"Invalid mode '{mode}'. Choose from: {VALID_MODES}")
+
+    generations = step.get("generate")
+    if not generations or not isinstance(generations, list):
+        die(f"Step mode '{mode}' has no 'generate' list")
+
+    # Merge global defaults into step config (without generate list)
+    step_cfg = {k: v for k, v in step.items() if k != "generate"}
+
+    # Resolve model
+    model_size = merge_config(globals_cfg, step_cfg).get("model_size", "1.7b")
+    device = merge_config(globals_cfg, step_cfg).get("device", "cpu")
+    dtype = merge_config(globals_cfg, step_cfg).get("dtype", "float32")
+    flash_attn = merge_config(globals_cfg, step_cfg).get("flash_attn", False)
+    models_dir = merge_config(globals_cfg, step_cfg).get("models_dir", DEFAULT_MODELS_DIR)
+
+    if mode == "custom-voice":
+        model_key = f"custom-voice-{model_size}"
+    elif mode == "voice-design":
+        model_key = "voice-design-1.7b"
+    elif mode == "voice-clone":
+        model_key = f"base-{model_size}"
+    else:
+        die(f"Unknown mode: {mode}")
+
+    model_path = resolve_model_path(models_dir, model_key)
+    model = load_model(model_path, device, resolve_dtype(dtype), flash_attn)
+
+    try:
+        # For voice-clone with step-level ref_audio, create reusable prompt
+        clone_prompt = None
+        if mode == "voice-clone" and step_cfg.get("ref_audio"):
+            # Check if any generation overrides ref_audio - those won't use the shared prompt
+            shared_count = sum(1 for g in generations if not g.get("ref_audio"))
+            if shared_count > 1:
+                x_vector_only = step_cfg.get("x_vector_only", False)
+                ref_text = None if x_vector_only else step_cfg.get("ref_text")
+                print("Creating reusable voice clone prompt ...")
+                clone_prompt = model.create_voice_clone_prompt(
+                    ref_audio=step_cfg["ref_audio"],
+                    ref_text=ref_text,
+                    x_vector_only_mode=x_vector_only,
+                )
+
+        for i, gen in enumerate(generations):
+            cfg = merge_config(globals_cfg, step_cfg, gen)
+            print(f"[{mode}] Generating {i + 1}/{len(generations)}: {cfg.get('text', '')[:60]}...")
+
+            if mode == "custom-voice":
+                gen_custom_voice(model, cfg)
+            elif mode == "voice-design":
+                gen_voice_design(model, cfg)
+            elif mode == "voice-clone":
+                # Use shared prompt only if this generation didn't override ref_audio
+                use_prompt = clone_prompt if (clone_prompt and not gen.get("ref_audio")) else None
+                gen_voice_clone(model, cfg, prompt=use_prompt)
+    finally:
+        print(f"Unloading model: {model_key}")
+        unload_model(model)
+
+
+def run_yaml(stream) -> None:
+    try:
+        config = yaml.safe_load(stream)
+    except yaml.YAMLError as e:
+        die(f"Invalid YAML: {e}")
+
+    if not isinstance(config, dict):
+        die("YAML config must be a mapping")
+
+    steps = config.get("steps")
+    if not steps or not isinstance(steps, list):
+        die("YAML config must have a 'steps' list")
+
+    # Extract global config (everything except steps)
+    globals_cfg = {k: v for k, v in config.items() if k != "steps"}
+
+    for i, step in enumerate(steps):
+        if not isinstance(step, dict):
+            die(f"Step {i + 1} must be a mapping")
+        print(f"\n=== Step {i + 1}/{len(steps)}: {step.get('mode', '?')} ===")
+        run_step(step, globals_cfg)
+
+    print(f"\nDone. {len(steps)} step(s) completed.")
+
+
 # ---------------------------------------------------------------------------
 # Subcommands
 # ---------------------------------------------------------------------------
 
-def cmd_custom_voice(args: argparse.Namespace) -> None:
-    """Generate speech using a predefined speaker voice."""
-    model_key = f"custom-voice-{args.model_size}"
-    model_path = args.checkpoint or resolve_model_path(args.models_dir, model_key)
-    model = load_model(model_path, args.device, resolve_dtype(args.dtype), args.flash_attn)
-
-    if args.model_size == "0.6b" and args.instruct:
-        print("Warning: 0.6B CustomVoice model does not support --instruct. Ignoring.")
-        args.instruct = None
-
-    kwargs = generation_kwargs(args)
-    kwargs["non_streaming_mode"] = not args.streaming
-
-    wavs, sr = model.generate_custom_voice(
-        text=args.text,
-        speaker=args.speaker,
-        language=args.language,
-        instruct=args.instruct or None,
-        **kwargs,
-    )
-    save_audio(wavs, sr, args.output)
-
-
-def cmd_voice_design(args: argparse.Namespace) -> None:
-    """Generate speech using a natural language voice description."""
-    model_path = args.checkpoint or resolve_model_path(args.models_dir, "voice-design-1.7b")
-    model = load_model(model_path, args.device, resolve_dtype(args.dtype), args.flash_attn)
-
-    kwargs = generation_kwargs(args)
-    kwargs["non_streaming_mode"] = not args.streaming
-
-    wavs, sr = model.generate_voice_design(
-        text=args.text,
-        instruct=args.instruct,
-        language=args.language,
-        **kwargs,
-    )
-    save_audio(wavs, sr, args.output)
-
-
-def cmd_voice_clone(args: argparse.Namespace) -> None:
-    """Clone a voice from reference audio."""
-    model_key = f"base-{args.model_size}"
-    model_path = args.checkpoint or resolve_model_path(args.models_dir, model_key)
-    model = load_model(model_path, args.device, resolve_dtype(args.dtype), args.flash_attn)
-
-    kwargs = generation_kwargs(args)
-    kwargs["non_streaming_mode"] = not args.streaming
-
-    if args.x_vector_only and args.ref_text:
-        print("Note: --ref-text is ignored in x-vector-only mode.")
-
-    # If creating a reusable prompt for multiple texts
-    if args.prompt_reuse and isinstance(args.text, list) and len(args.text) > 1:
-        print("Creating reusable voice clone prompt ...")
-        prompt_items = model.create_voice_clone_prompt(
-            ref_audio=args.ref_audio,
-            ref_text=None if args.x_vector_only else args.ref_text,
-            x_vector_only_mode=args.x_vector_only,
-        )
-        all_wavs = []
-        sr = None
-        for i, text in enumerate(args.text):
-            print(f"Generating {i + 1}/{len(args.text)} ...")
-            wavs, sr = model.generate_voice_clone(
-                text=text,
-                language=args.language,
-                voice_clone_prompt=prompt_items,
-                **kwargs,
-            )
-            all_wavs.extend(wavs)
-        save_audio(all_wavs, sr, args.output)
-    else:
-        text = args.text[0] if isinstance(args.text, list) and len(args.text) == 1 else args.text
-        wavs, sr = model.generate_voice_clone(
-            text=text,
-            language=args.language,
-            ref_audio=args.ref_audio,
-            ref_text=None if args.x_vector_only else args.ref_text,
-            x_vector_only_mode=args.x_vector_only,
-            **kwargs,
-        )
-        save_audio(wavs, sr, args.output)
-
-
-def cmd_list_speakers(args: argparse.Namespace) -> None:
-    """List available predefined speakers."""
+def cmd_list_speakers() -> None:
     print("Available speakers for CustomVoice models:")
     print()
-    info = {
-        "Vivian":   ("Female", "Chinese",  "Bright, slightly edgy young voice"),
-        "Serena":   ("Female", "Chinese",  "Warm, gentle young voice"),
-        "Uncle_Fu": ("Male",   "Chinese",  "Seasoned, low mellow timbre"),
-        "Dylan":    ("Male",   "Chinese",  "Youthful Beijing dialect, clear natural timbre"),
-        "Eric":     ("Male",   "Chinese",  "Lively Chengdu/Sichuan dialect, slightly husky"),
-        "Ryan":     ("Male",   "English",  "Dynamic with strong rhythmic drive"),
-        "Aiden":    ("Male",   "English",  "Sunny American, clear midrange"),
-        "Ono_Anna": ("Female", "Japanese", "Playful, light nimble timbre"),
-        "Sohee":    ("Female", "Korean",   "Warm with rich emotion"),
-    }
-    for name, (gender, lang, desc) in info.items():
+    for name, (gender, lang, desc) in SPEAKER_INFO.items():
         print(f"  {name:<12} {gender:<8} {lang:<10} {desc}")
 
 
 def cmd_tokenize(args: argparse.Namespace) -> None:
-    """Encode audio to speech tokens and decode back (round-trip)."""
-    tok_path = args.checkpoint or resolve_tokenizer_path(args.models_dir, args.tokenizer)
+    tok_path = resolve_tokenizer_path(args.models_dir, args.tokenizer)
     print(f"Loading tokenizer: {tok_path} ...")
     tokenizer = Qwen3TTSTokenizer.from_pretrained(tok_path, device_map=args.device)
     print("Tokenizer loaded.")
@@ -319,90 +467,49 @@ def cmd_tokenize(args: argparse.Namespace) -> None:
 
 
 # ---------------------------------------------------------------------------
-# CLI argument parser
+# CLI
 # ---------------------------------------------------------------------------
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Qwen3-TTS: text-to-speech with all models and options",
+        description="Qwen3-TTS: YAML-driven text-to-speech pipeline",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=__doc__,
     )
-    parser.add_argument("--models-dir", "-m", default=DEFAULT_MODELS_DIR, help=f"Base directory containing model subdirs (default: {DEFAULT_MODELS_DIR})")
+    parser.add_argument("--models-dir", "-m", default=DEFAULT_MODELS_DIR, help=f"Base directory for models (default: {DEFAULT_MODELS_DIR})")
 
-    # ---- shared args ----
-    shared = argparse.ArgumentParser(add_help=False)
-    shared.add_argument("--device", default="cpu", help="Device (default: cpu)")
-    shared.add_argument("--dtype", default="float32", choices=["float16", "fp16", "bfloat16", "bf16", "float32", "fp32"], help="Model dtype (default: float32)")
-    shared.add_argument("--flash-attn", action="store_true", default=False, help="Use FlashAttention-2 (GPU only)")
-    shared.add_argument("--output", "-o", default="output.wav", help="Output file path (default: output.wav)")
-    shared.add_argument("--checkpoint", "-c", default=None, help="Override model path (absolute path, bypasses --models-dir)")
+    sub = parser.add_subparsers(dest="command")
 
-    # ---- generation args ----
-    gen = argparse.ArgumentParser(add_help=False)
-    gen.add_argument("--temperature", type=float, default=DEFAULT_TEMPERATURE, help=f"Sampling temperature (default: {DEFAULT_TEMPERATURE})")
-    gen.add_argument("--top-k", type=int, default=DEFAULT_TOP_K, help=f"Top-k sampling (default: {DEFAULT_TOP_K})")
-    gen.add_argument("--top-p", type=float, default=DEFAULT_TOP_P, help=f"Top-p / nucleus sampling (default: {DEFAULT_TOP_P})")
-    gen.add_argument("--repetition-penalty", type=float, default=DEFAULT_REPETITION_PENALTY, help=f"Repetition penalty (default: {DEFAULT_REPETITION_PENALTY})")
-    gen.add_argument("--max-new-tokens", type=int, default=DEFAULT_MAX_NEW_TOKENS, help=f"Max codec tokens to generate (default: {DEFAULT_MAX_NEW_TOKENS})")
-    gen.add_argument("--no-sample", action="store_true", default=False, help="Disable sampling (greedy decoding)")
-    gen.add_argument("--streaming", action="store_true", default=False, help="Use streaming mode (lower latency, simulates char-by-char input)")
+    p_py = sub.add_parser("print-yaml", help="Print a template YAML config to stdout")
+    p_py.set_defaults(func=lambda a: print(YAML_TEMPLATE))
 
-    sub = parser.add_subparsers(dest="command", required=True)
+    p_ls = sub.add_parser("list-speakers", help="List available preset speakers")
+    p_ls.set_defaults(func=lambda a: cmd_list_speakers())
 
-    # ---- custom-voice ----
-    p_cv = sub.add_parser("custom-voice", parents=[shared, gen], help="Predefined speaker voices with optional emotion control")
-    p_cv.add_argument("text", help="Text to synthesize")
-    p_cv.add_argument("--speaker", "-s", default="Vivian", choices=SPEAKERS, help="Speaker name (default: Vivian)")
-    p_cv.add_argument("--language", "-l", default="Auto", choices=LANGUAGES, help="Language (default: Auto)")
-    p_cv.add_argument("--instruct", "-i", default=None, help="Emotion/style instruction, e.g. 'Speak angrily' (1.7B only)")
-    p_cv.add_argument("--model-size", default="1.7b", choices=["1.7b", "0.6b"], help="Model size (default: 1.7b)")
-    p_cv.set_defaults(func=cmd_custom_voice)
-
-    # ---- voice-design ----
-    p_vd = sub.add_parser("voice-design", parents=[shared, gen], help="Describe the desired voice in natural language")
-    p_vd.add_argument("text", help="Text to synthesize")
-    p_vd.add_argument("--instruct", "-i", required=True, help="Natural language voice description, e.g. 'A warm young female voice with a cheerful tone'")
-    p_vd.add_argument("--language", "-l", default="Auto", choices=LANGUAGES, help="Language (default: Auto)")
-    p_vd.set_defaults(func=cmd_voice_design)
-
-    # ---- voice-clone ----
-    p_vc = sub.add_parser("voice-clone", parents=[shared, gen], help="Clone a voice from reference audio")
-    p_vc.add_argument("text", nargs="+", help="Text(s) to synthesize (multiple texts reuse the same voice prompt)")
-    p_vc.add_argument("--ref-audio", "-r", required=True, help="Reference audio (file path, URL, or base64)")
-    p_vc.add_argument("--ref-text", "-t", default=None, help="Transcript of reference audio (required for ICL mode, ignored with --x-vector-only)")
-    p_vc.add_argument("--x-vector-only", action="store_true", default=False, help="Use only speaker embedding, no reference transcript needed")
-    p_vc.add_argument("--language", "-l", default="Auto", choices=LANGUAGES, help="Language (default: Auto)")
-    p_vc.add_argument("--model-size", default="1.7b", choices=["1.7b", "0.6b"], help="Model size (default: 1.7b)")
-    p_vc.add_argument("--prompt-reuse", action="store_true", default=False, help="Pre-compute voice prompt and reuse across multiple texts (more efficient)")
-    p_vc.set_defaults(func=cmd_voice_clone)
-
-    # ---- list-speakers ----
-    p_ls = sub.add_parser("list-speakers", help="List available predefined speakers")
-    p_ls.set_defaults(func=cmd_list_speakers)
-
-    # ---- tokenize ----
-    p_tok = sub.add_parser("tokenize", parents=[shared], help="Encode audio to speech tokens and decode back (round-trip)")
+    p_tok = sub.add_parser("tokenize", help="Encode audio to speech tokens and decode back")
     p_tok.add_argument("audio", help="Input audio file path")
+    p_tok.add_argument("--output", "-o", default="output.wav", help="Output file path (default: output.wav)")
+    p_tok.add_argument("--device", default="cpu", help="Device (default: cpu)")
     p_tok.add_argument("--tokenizer", default="12hz", choices=["12hz"], help="Tokenizer variant (default: 12hz)")
     p_tok.set_defaults(func=cmd_tokenize)
 
     return parser
 
 
-# ---------------------------------------------------------------------------
-# Main
-# ---------------------------------------------------------------------------
-
 def main() -> None:
     parser = build_parser()
     args = parser.parse_args()
 
-    # Validate voice-clone requires either --ref-text or --x-vector-only
-    if args.command == "voice-clone" and not args.x_vector_only and not args.ref_text:
-        parser.error("voice-clone requires --ref-text (transcript of reference audio) unless --x-vector-only is set")
+    if args.command:
+        args.func(args)
+        return
 
-    args.func(args)
+    # No subcommand, no flags → read YAML from stdin
+    if sys.stdin.isatty():
+        parser.print_help()
+        sys.exit(1)
+
+    run_yaml(sys.stdin)
 
 
 if __name__ == "__main__":
