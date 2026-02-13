@@ -8,6 +8,7 @@ Usage:
   tts                    Read YAML from stdin, run pipeline
   tts print-yaml         Print a template YAML config to stdout
   tts list-speakers      List available preset speakers
+  tts log [-f] [-n N]    View TTS logs
   tts tokenize <audio>   Encode/decode audio through the speech tokenizer
 
 Examples:
@@ -15,6 +16,11 @@ Examples:
   ssh tts@host "tts print-yaml" > job.yaml
   vim job.yaml
   ssh tts@host "tts" < job.yaml
+
+  # View logs
+  ssh tts@host "tts log"
+  ssh tts@host "tts log -f"
+  ssh tts@host "tts log -n 100"
 
   # List speakers
   ssh tts@host "tts list-speakers"
@@ -25,7 +31,10 @@ Examples:
 
 import argparse
 import gc
+import os
 import sys
+import time
+from datetime import datetime
 from pathlib import Path
 
 import numpy as np
@@ -40,6 +49,8 @@ from qwen_tts import Qwen3TTSModel, Qwen3TTSTokenizer
 # ---------------------------------------------------------------------------
 
 DEFAULT_MODELS_DIR = "/models"
+LOG_DIR = "/var/log/tts"
+LOG_RETENTION_DEFAULT = "7d"
 
 MODELS = {
     "custom-voice-1.7b": "Qwen3-TTS-12Hz-1.7B-CustomVoice",
@@ -153,6 +164,120 @@ steps:
         x_vector_only: true         # no transcript needed
         output: clone3.wav
 """
+
+
+# ---------------------------------------------------------------------------
+# Logging
+# ---------------------------------------------------------------------------
+
+def parse_duration(s: str) -> float:
+    """Parse duration string like '7d', '1w', '24h' to seconds."""
+    s = s.strip().lower()
+    units = {"s": 1, "m": 60, "h": 3600, "d": 86400, "w": 604800}
+    if s and s[-1] in units:
+        return float(s[:-1]) * units[s[-1]]
+    return float(s) * 86400
+
+
+class LogManager:
+    """Dual-file logging with day rotation and cleanup."""
+
+    def __init__(self):
+        self.log_dir = Path(LOG_DIR)
+        self.log_dir.mkdir(parents=True, exist_ok=True)
+        self.current_log = self.log_dir / "tts.log"
+        self._today = None
+        self._daily_fh = None
+        self._current_fh = None
+        self._open_files()
+        self._cleanup()
+
+    def _open_files(self):
+        today = datetime.now().strftime("%Y_%m_%d")
+        daily_path = self.log_dir / f"{today}_tts.log"
+
+        if self._today == today:
+            return
+
+        # Close old handles
+        if self._daily_fh:
+            self._daily_fh.close()
+        if self._current_fh:
+            self._current_fh.close()
+
+        # New day and no daily file yet = truncate current log
+        if not daily_path.exists():
+            with open(self.current_log, "w"):
+                pass
+
+        self._today = today
+        self._daily_fh = open(daily_path, "a")
+        self._current_fh = open(self.current_log, "a")
+
+    def write(self, data: str) -> None:
+        if not data:
+            return
+        self._open_files()
+        ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        for line in data.splitlines(True):
+            if line.strip():
+                stamped = f"[{ts}] {line}"
+            else:
+                stamped = line
+            self._daily_fh.write(stamped)
+            self._current_fh.write(stamped)
+        self._daily_fh.flush()
+        self._current_fh.flush()
+
+    def _cleanup(self):
+        retention_str = os.environ.get("TTS_LOG_RETENTION", LOG_RETENTION_DEFAULT)
+        try:
+            max_age = parse_duration(retention_str)
+        except (ValueError, IndexError):
+            max_age = parse_duration(LOG_RETENTION_DEFAULT)
+        now = time.time()
+        for f in self.log_dir.glob("*_*_*_tts.log"):
+            try:
+                if now - f.stat().st_mtime > max_age:
+                    f.unlink()
+            except OSError:
+                pass
+
+    def close(self):
+        if self._daily_fh:
+            self._daily_fh.close()
+        if self._current_fh:
+            self._current_fh.close()
+
+
+class TeeWriter:
+    """Tee stdout/stderr to LogManager with timestamps."""
+
+    def __init__(self, original, log_manager: LogManager):
+        self.original = original
+        self.log_manager = log_manager
+
+    def write(self, data):
+        if data:
+            self.original.write(data)
+            self.log_manager.write(data)
+
+    def flush(self):
+        self.original.flush()
+
+    def fileno(self):
+        return self.original.fileno()
+
+    def isatty(self):
+        return False
+
+
+def setup_logging() -> LogManager:
+    """Install TeeWriters on stdout/stderr. Returns LogManager for cleanup."""
+    mgr = LogManager()
+    sys.stdout = TeeWriter(sys.stdout, mgr)
+    sys.stderr = TeeWriter(sys.stderr, mgr)
+    return mgr
 
 
 # ---------------------------------------------------------------------------
@@ -384,7 +509,6 @@ def run_step(step: dict, globals_cfg: dict) -> None:
         # For voice-clone with step-level ref_audio, create reusable prompt
         clone_prompt = None
         if mode == "voice-clone" and step_cfg.get("ref_audio"):
-            # Check if any generation overrides ref_audio - those won't use the shared prompt
             shared_count = sum(1 for g in generations if not g.get("ref_audio"))
             if shared_count > 1:
                 x_vector_only = step_cfg.get("x_vector_only", False)
@@ -405,7 +529,6 @@ def run_step(step: dict, globals_cfg: dict) -> None:
             elif mode == "voice-design":
                 gen_voice_design(model, cfg)
             elif mode == "voice-clone":
-                # Use shared prompt only if this generation didn't override ref_audio
                 use_prompt = clone_prompt if (clone_prompt and not gen.get("ref_audio")) else None
                 gen_voice_clone(model, cfg, prompt=use_prompt)
     finally:
@@ -426,7 +549,6 @@ def run_yaml(stream) -> None:
     if not steps or not isinstance(steps, list):
         die("YAML config must have a 'steps' list")
 
-    # Extract global config (everything except steps)
     globals_cfg = {k: v for k, v in config.items() if k != "steps"}
 
     for i, step in enumerate(steps):
@@ -450,20 +572,74 @@ def cmd_list_speakers() -> None:
 
 
 def cmd_tokenize(args: argparse.Namespace) -> None:
-    tok_path = resolve_tokenizer_path(args.models_dir, args.tokenizer)
-    print(f"Loading tokenizer: {tok_path} ...")
-    tokenizer = Qwen3TTSTokenizer.from_pretrained(tok_path, device_map=args.device)
-    print("Tokenizer loaded.")
+    log_mgr = setup_logging()
+    try:
+        tok_path = resolve_tokenizer_path(args.models_dir, args.tokenizer)
+        print(f"Loading tokenizer: {tok_path} ...")
+        tokenizer = Qwen3TTSTokenizer.from_pretrained(tok_path, device_map=args.device)
+        print("Tokenizer loaded.")
 
-    print(f"Encoding: {args.audio} ...")
-    encoded = tokenizer.encode(args.audio)
+        print(f"Encoding: {args.audio} ...")
+        encoded = tokenizer.encode(args.audio)
 
-    for i, codes in enumerate(encoded.audio_codes):
-        print(f"  Segment {i}: codes shape {tuple(codes.shape)}")
+        for i, codes in enumerate(encoded.audio_codes):
+            print(f"  Segment {i}: codes shape {tuple(codes.shape)}")
 
-    print("Decoding back to waveform ...")
-    wavs, sr = tokenizer.decode(encoded)
-    save_audio(wavs, sr, args.output)
+        print("Decoding back to waveform ...")
+        wavs, sr = tokenizer.decode(encoded)
+        save_audio(wavs, sr, args.output)
+    finally:
+        log_mgr.close()
+
+
+def _tail(path: Path, n: int) -> list[str]:
+    """Read last n lines from a file."""
+    try:
+        with open(path) as f:
+            lines = f.readlines()
+    except FileNotFoundError:
+        return []
+    return lines[-n:] if len(lines) > n else lines
+
+
+def cmd_log(args: argparse.Namespace) -> None:
+    log_path = Path(LOG_DIR) / "tts.log"
+
+    if not log_path.exists() or log_path.stat().st_size == 0:
+        print("No logs yet.")
+        return
+
+    n = args.n or 20
+
+    lines = _tail(log_path, n)
+    for line in lines:
+        sys.stdout.write(line)
+    sys.stdout.flush()
+
+    if not args.follow:
+        return
+
+    # Follow mode: tail -f with truncation detection
+    try:
+        with open(log_path) as f:
+            f.seek(0, 2)
+            while True:
+                where = f.tell()
+                line = f.readline()
+                if line:
+                    sys.stdout.write(line)
+                    sys.stdout.flush()
+                else:
+                    # Detect truncation (day rotation)
+                    try:
+                        size = os.path.getsize(log_path)
+                    except OSError:
+                        size = 0
+                    if size < where:
+                        f.seek(0)
+                    time.sleep(0.5)
+    except (BrokenPipeError, KeyboardInterrupt):
+        pass
 
 
 # ---------------------------------------------------------------------------
@@ -486,6 +662,11 @@ def build_parser() -> argparse.ArgumentParser:
     p_ls = sub.add_parser("list-speakers", help="List available preset speakers")
     p_ls.set_defaults(func=lambda a: cmd_list_speakers())
 
+    p_log = sub.add_parser("log", help="View TTS logs")
+    p_log.add_argument("-f", "--follow", action="store_true", default=False, help="Follow log output (like tail -f)")
+    p_log.add_argument("-n", type=int, default=20, help="Number of lines to show (default: 20)")
+    p_log.set_defaults(func=cmd_log)
+
     p_tok = sub.add_parser("tokenize", help="Encode audio to speech tokens and decode back")
     p_tok.add_argument("audio", help="Input audio file path")
     p_tok.add_argument("--output", "-o", default="output.wav", help="Output file path (default: output.wav)")
@@ -504,12 +685,16 @@ def main() -> None:
         args.func(args)
         return
 
-    # No subcommand, no flags → read YAML from stdin
+    # No subcommand → read YAML from stdin
     if sys.stdin.isatty():
         parser.print_help()
         sys.exit(1)
 
-    run_yaml(sys.stdin)
+    log_mgr = setup_logging()
+    try:
+        run_yaml(sys.stdin)
+    finally:
+        log_mgr.close()
 
 
 if __name__ == "__main__":

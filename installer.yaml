@@ -8,3 +8,8 @@ volumes:
     mount: /models:ro
     default: ./models
     description: Models directory
+  - flag: -l
+    env: LOGS_DIR
+    mount: /var/log/tts
+    default: ./logs
+    description: Logs directory

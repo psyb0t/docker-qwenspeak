@@ -1,6 +1,7 @@
 FROM psyb0t/lockbox
 
 ENV LOCKBOX_USER=tts
+ENV TTS_LOG_RETENTION=7d
 
 # System deps for audio processing
 RUN apt-get update && \
@@ -16,6 +17,10 @@ RUN apt-get update && \
 COPY requirements.txt /tmp/requirements.txt
 RUN pip3 install --no-cache-dir --break-system-packages -r /tmp/requirements.txt && \
     rm /tmp/requirements.txt
+
+# Log directory (777 because UID is set at runtime via LOCKBOX_UID)
+RUN mkdir -p /var/log/tts && chmod 777 /var/log/tts
+VOLUME /var/log/tts
 
 # App
 COPY tts.py /app/tts.py

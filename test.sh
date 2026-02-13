@@ -109,6 +109,7 @@ TESTS=(
     "tts --help|usage:|i|tts help shows usage"
     "tts --help|print-yaml||tts help shows print-yaml"
     "tts --help|list-speakers||tts help shows list-speakers"
+    "tts --help|log||tts help shows log"
     "tts --help|tokenize||tts help shows tokenize"
     "tts --help|models-dir||tts help shows --models-dir"
 
@@ -129,6 +130,11 @@ TESTS=(
     "tts list-speakers|Aiden||list-speakers shows Aiden"
     "tts list-speakers|Sohee||list-speakers shows Sohee"
     "tts list-speakers|Ono_Anna||list-speakers shows Ono_Anna"
+
+    # log
+    "tts log --help|follow||log help shows --follow"
+    "tts log --help|-n||log help shows -n"
+    "tts log|No logs yet||log shows no logs message"
 
     # tokenize help
     "tts tokenize --help|audio||tokenize shows audio arg"

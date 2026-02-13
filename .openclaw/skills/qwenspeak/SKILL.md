@@ -80,6 +80,7 @@ ssh -p $QWENSPEAK_PORT tts@$QWENSPEAK_HOST "<command> [args]"
 | -------------- | ------------------------------------------------------------ |
 | `print-yaml`   | Print a template YAML config to stdout                       |
 | `list-speakers`| List available preset speakers                               |
+| `log`          | View TTS logs (`-f` to follow, `-n N` for line count)        |
 | `tokenize`     | Encode/decode audio through the speech tokenizer             |
 
 When called with no subcommand, `tts` reads a YAML config from stdin and runs the pipeline.
@@ -175,6 +176,21 @@ steps:
     generate:
       - text: "This is unacceptable"
         output: angry1.wav
+```
+
+## Logging
+
+All pipeline output is logged to `/var/log/tts/`. View logs via SSH:
+
+```bash
+# View last 20 lines
+ssh -p $QWENSPEAK_PORT tts@$QWENSPEAK_HOST "tts log"
+
+# Follow (like tail -f)
+ssh -p $QWENSPEAK_PORT tts@$QWENSPEAK_HOST "tts log -f"
+
+# Last 100 lines
+ssh -p $QWENSPEAK_PORT tts@$QWENSPEAK_HOST "tts log -n 100"
 ```
 
 ## File Operations

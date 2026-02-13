@@ -87,7 +87,7 @@ All flags persist to `~/.qwenspeak/.env` - next `start` reuses the last values.
 docker pull psyb0t/qwenspeak
 
 cat ~/.ssh/id_rsa.pub > authorized_keys
-mkdir -p work host_keys
+mkdir -p work host_keys logs
 
 docker run -d \
   --name qwenspeak \
@@ -96,9 +96,11 @@ docker run -d \
   -p 2222:22 \
   -e "LOCKBOX_UID=$(id -u)" \
   -e "LOCKBOX_GID=$(id -g)" \
+  -e "TTS_LOG_RETENTION=7d" \
   -v $(pwd)/authorized_keys:/etc/lockbox/authorized_keys:ro \
   -v $(pwd)/host_keys:/etc/lockbox/host_keys \
   -v $(pwd)/work:/work \
+  -v $(pwd)/logs:/var/log/tts \
   -v /path/to/your/models:/models:ro \
   psyb0t/qwenspeak
 
@@ -227,6 +229,30 @@ ssh tts@host "tts list-speakers"
 # Tokenize round-trip (encode audio → speech tokens → decode back)
 ssh tts@host "tts tokenize input.wav"
 ```
+
+## Logging
+
+All pipeline and tokenize output is logged to `/var/log/tts/`. Mount this as a volume to access logs from the host.
+
+Two files are maintained:
+- `tts.log` - current log (truncated when a new day starts)
+- `YYYY_MM_DD_tts.log` - daily archive
+
+```bash
+# View last 20 lines
+ssh tts@host "tts log"
+
+# View last 100 lines
+ssh tts@host "tts log -n 100"
+
+# Follow (like tail -f)
+ssh tts@host "tts log -f"
+
+# Follow with initial 50 lines
+ssh tts@host "tts log -f -n 50"
+```
+
+Old daily logs are cleaned up automatically based on the `TTS_LOG_RETENTION` env var (default: `7d`). Supports `s`, `m`, `h`, `d`, `w` suffixes. Cleanup runs at the start of each pipeline execution.
 
 ## Available Speakers
 
