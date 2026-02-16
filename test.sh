@@ -179,6 +179,20 @@ TESTS=(
     # tokenize help
     "tts tokenize --help|audio||tokenize shows audio arg"
     "tts tokenize --help|output||tokenize shows --output"
+
+    # job management help
+    "tts --help|list-jobs||tts help shows list-jobs"
+    "tts --help|get-job||tts help shows get-job"
+    "tts --help|get-job-log||tts help shows get-job-log"
+    "tts --help|cancel-job||tts help shows cancel-job"
+    "tts list-jobs --help|json||list-jobs help shows --json"
+    "tts get-job --help|id||get-job help shows id arg"
+    "tts get-job-log --help|id||get-job-log help shows id arg"
+    "tts get-job-log --help|follow||get-job-log help shows --follow"
+    "tts cancel-job --help|id||cancel-job help shows id arg"
+
+    # list-jobs empty
+    "tts list-jobs|No jobs|i|list-jobs shows no jobs message"
 )
 
 echo ""

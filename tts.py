@@ -1,39 +1,47 @@
 #!/usr/bin/env python3
 """Qwen3-TTS: YAML-driven text-to-speech pipeline.
 
-Pipe a YAML config via stdin to run multi-step TTS generation.
-Each step loads a model, runs all generations, then unloads it.
+Pipe a YAML config via stdin to submit an async TTS job.
+Returns a job UUID immediately. Poll with get-job.
 
 Usage:
-  tts                    Read YAML from stdin, run pipeline
+  tts                    Read YAML from stdin, submit async job
   tts print-yaml         Print a template YAML config to stdout
   tts list-speakers      List available preset speakers
+  tts list-jobs          List all TTS jobs
+  tts get-job <id>       Get job details as JSON
+  tts get-job-log <id>   View job log (with -f to follow)
+  tts cancel-job <id>    Cancel a running job
   tts log [-f] [-n N]    View TTS logs
   tts tokenize <audio>   Encode/decode audio through the speech tokenizer
 
 Examples:
-  # Dump template, edit it, run it
-  ssh tts@host "tts print-yaml" > job.yaml
-  vim job.yaml
+  # Submit a job
   ssh tts@host "tts" < job.yaml
+  # {"id": "...", "status": "pending", ...}
+
+  # Check progress
+  ssh tts@host "tts get-job 550e8400"
+
+  # List all jobs
+  ssh tts@host "tts list-jobs"
+
+  # Cancel
+  ssh tts@host "tts cancel-job 550e8400"
 
   # View logs
-  ssh tts@host "tts log"
   ssh tts@host "tts log -f"
-  ssh tts@host "tts log -n 100"
-
-  # List speakers
-  ssh tts@host "tts list-speakers"
-
-  # Tokenize round-trip
-  ssh tts@host "tts tokenize input.wav"
 """
 
 import argparse
 import gc
+import json
 import os
+import shutil
+import signal
 import sys
 import time
+import uuid
 from datetime import datetime
 from pathlib import Path
 
@@ -41,7 +49,6 @@ import numpy as np
 import soundfile
 import torch
 import yaml
-
 from qwen_tts import Qwen3TTSModel, Qwen3TTSTokenizer
 
 # ---------------------------------------------------------------------------
@@ -51,6 +58,7 @@ from qwen_tts import Qwen3TTSModel, Qwen3TTSTokenizer
 DEFAULT_MODELS_DIR = "/models"
 LOG_DIR = "/var/log/tts"
 LOG_RETENTION_DEFAULT = "7d"
+JOBS_DIR = "/jobs"
 
 MODELS = {
     "custom-voice-1.7b": "Qwen3-TTS-12Hz-1.7B-CustomVoice",
@@ -65,13 +73,29 @@ TOKENIZERS = {
 }
 
 SPEAKERS = [
-    "Vivian", "Serena", "Uncle_Fu", "Dylan", "Eric",
-    "Ryan", "Aiden", "Ono_Anna", "Sohee",
+    "Vivian",
+    "Serena",
+    "Uncle_Fu",
+    "Dylan",
+    "Eric",
+    "Ryan",
+    "Aiden",
+    "Ono_Anna",
+    "Sohee",
 ]
 
 LANGUAGES = [
-    "Auto", "Chinese", "English", "Japanese", "Korean",
-    "German", "French", "Russian", "Portuguese", "Spanish", "Italian",
+    "Auto",
+    "Chinese",
+    "English",
+    "Japanese",
+    "Korean",
+    "German",
+    "French",
+    "Russian",
+    "Portuguese",
+    "Spanish",
+    "Italian",
 ]
 
 VALID_MODES = ["custom-voice", "voice-design", "voice-clone"]
@@ -96,20 +120,21 @@ GLOBAL_DEFAULTS = {
 }
 
 SPEAKER_INFO = {
-    "Vivian":   ("Female", "Chinese",  "Bright, slightly edgy young voice"),
-    "Serena":   ("Female", "Chinese",  "Warm, gentle young voice"),
-    "Uncle_Fu": ("Male",   "Chinese",  "Seasoned, low mellow timbre"),
-    "Dylan":    ("Male",   "Chinese",  "Youthful Beijing dialect, clear natural timbre"),
-    "Eric":     ("Male",   "Chinese",  "Lively Chengdu/Sichuan dialect, slightly husky"),
-    "Ryan":     ("Male",   "English",  "Dynamic with strong rhythmic drive"),
-    "Aiden":    ("Male",   "English",  "Sunny American, clear midrange"),
+    "Vivian": ("Female", "Chinese", "Bright, slightly edgy young voice"),
+    "Serena": ("Female", "Chinese", "Warm, gentle young voice"),
+    "Uncle_Fu": ("Male", "Chinese", "Seasoned, low mellow timbre"),
+    "Dylan": ("Male", "Chinese", "Youthful Beijing dialect, clear natural timbre"),
+    "Eric": ("Male", "Chinese", "Lively Chengdu/Sichuan dialect, slightly husky"),
+    "Ryan": ("Male", "English", "Dynamic with strong rhythmic drive"),
+    "Aiden": ("Male", "English", "Sunny American, clear midrange"),
     "Ono_Anna": ("Female", "Japanese", "Playful, light nimble timbre"),
-    "Sohee":    ("Female", "Korean",   "Warm with rich emotion"),
+    "Sohee": ("Female", "Korean", "Warm with rich emotion"),
 }
 
 YAML_TEMPLATE = """\
 # Qwen3-TTS YAML config
 # Pipe this to tts via stdin: ssh tts@host "tts" < job.yaml
+# Returns a job UUID immediately. Poll with: ssh tts@host "tts get-job <id>"
 
 # Global settings (apply to all steps unless overridden)
 dtype: float32             # float32, float16, bfloat16 (float16/bfloat16 GPU only)
@@ -170,6 +195,7 @@ steps:
 # Logging
 # ---------------------------------------------------------------------------
 
+
 def parse_duration(s: str) -> float:
     """Parse duration string like '7d', '1w', '24h' to seconds."""
     s = s.strip().lower()
@@ -182,13 +208,16 @@ def parse_duration(s: str) -> float:
 class LogManager:
     """Dual-file logging with day rotation and cleanup."""
 
-    def __init__(self):
+    def __init__(self, job_log_path: str | None = None):
         self.log_dir = Path(LOG_DIR)
         self.log_dir.mkdir(parents=True, exist_ok=True)
         self.current_log = self.log_dir / "tts.log"
         self._today = None
         self._daily_fh = None
         self._current_fh = None
+        self._job_fh = None
+        if job_log_path:
+            self._job_fh = open(job_log_path, "a")
         self._open_files()
         self._cleanup()
 
@@ -226,8 +255,12 @@ class LogManager:
                 stamped = line
             self._daily_fh.write(stamped)
             self._current_fh.write(stamped)
+            if self._job_fh:
+                self._job_fh.write(stamped)
         self._daily_fh.flush()
         self._current_fh.flush()
+        if self._job_fh:
+            self._job_fh.flush()
 
     def _cleanup(self):
         retention_str = os.environ.get("TTS_LOG_RETENTION", LOG_RETENTION_DEFAULT)
@@ -248,6 +281,8 @@ class LogManager:
             self._daily_fh.close()
         if self._current_fh:
             self._current_fh.close()
+        if self._job_fh:
+            self._job_fh.close()
 
 
 class TeeWriter:
@@ -272,9 +307,9 @@ class TeeWriter:
         return False
 
 
-def setup_logging() -> LogManager:
+def setup_logging(job_log_path: str | None = None) -> LogManager:
     """Install TeeWriters on stdout/stderr. Returns LogManager for cleanup."""
-    mgr = LogManager()
+    mgr = LogManager(job_log_path=job_log_path)
     sys.stdout = TeeWriter(sys.stdout, mgr)
     sys.stderr = TeeWriter(sys.stderr, mgr)
     return mgr
@@ -284,6 +319,7 @@ def setup_logging() -> LogManager:
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def die(msg: str) -> None:
     print(f"Error: {msg}", file=sys.stderr)
     sys.exit(1)
@@ -291,9 +327,12 @@ def die(msg: str) -> None:
 
 def resolve_dtype(name: str) -> torch.dtype:
     mapping = {
-        "float16": torch.float16, "fp16": torch.float16,
-        "bfloat16": torch.bfloat16, "bf16": torch.bfloat16,
-        "float32": torch.float32, "fp32": torch.float32,
+        "float16": torch.float16,
+        "fp16": torch.float16,
+        "bfloat16": torch.bfloat16,
+        "bf16": torch.bfloat16,
+        "float32": torch.float32,
+        "fp32": torch.float32,
     }
     if name not in mapping:
         die(f"Unknown dtype '{name}'. Choose from: {list(mapping)}")
@@ -316,7 +355,9 @@ def resolve_tokenizer_path(models_dir: str, variant: str) -> str:
     return str(path)
 
 
-def load_model(model_path: str, device: str, dtype: torch.dtype, flash_attn: bool) -> Qwen3TTSModel:
+def load_model(
+    model_path: str, device: str, dtype: torch.dtype, flash_attn: bool
+) -> Qwen3TTSModel:
     kwargs = {"device_map": device, "dtype": dtype}
     if flash_attn:
         kwargs["attn_implementation"] = "flash_attention_2"
@@ -371,8 +412,124 @@ def merge_config(*layers: dict) -> dict:
 
 
 # ---------------------------------------------------------------------------
+# Job management
+# ---------------------------------------------------------------------------
+
+
+def _job_dir(job_id: str) -> Path:
+    return Path(JOBS_DIR) / job_id
+
+
+def _job_path(job_id: str) -> Path:
+    return _job_dir(job_id) / "job.json"
+
+
+def _job_log_path(job_id: str) -> Path:
+    return _job_dir(job_id) / "job.log"
+
+
+def _pid_alive(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+        return True
+    except OSError:
+        return False
+
+
+def save_job(job: dict) -> None:
+    """Atomic write: tmp file then rename."""
+    path = _job_path(job["id"])
+    tmp = path.with_suffix(".tmp")
+    with open(tmp, "w") as f:
+        json.dump(job, f, indent=2)
+    os.rename(str(tmp), str(path))
+
+
+def _resolve_job_id(job_id: str) -> str:
+    """Resolve a full or prefix job ID to the actual job UUID."""
+    if _job_dir(job_id).is_dir():
+        return job_id
+    # Try prefix match on directory names
+    matches = [
+        d.name
+        for d in Path(JOBS_DIR).iterdir()
+        if d.is_dir() and d.name.startswith(job_id)
+    ]
+    if len(matches) == 1:
+        return matches[0]
+    if len(matches) > 1:
+        die(f"Ambiguous job ID '{job_id}', matches: {[m[:8] for m in matches]}")
+    die(f"Job not found: {job_id}")
+    return ""  # unreachable, die exits
+
+
+def load_job(job_id: str) -> dict:
+    resolved = _resolve_job_id(job_id)
+    path = _job_path(resolved)
+    if not path.exists():
+        die(f"Job not found: {job_id}")
+    with open(path) as f:
+        return json.load(f)
+
+
+def delete_job(job: dict) -> None:
+    d = _job_dir(job["id"])
+    shutil.rmtree(d, ignore_errors=True)
+
+
+def cleanup_stale_jobs() -> None:
+    """Remove job directories whose worker PID is dead."""
+    jobs_dir = Path(JOBS_DIR)
+    if not jobs_dir.exists():
+        return
+    for d in jobs_dir.iterdir():
+        if not d.is_dir():
+            continue
+        json_path = d / "job.json"
+        try:
+            with open(json_path) as fh:
+                job = json.load(fh)
+        except (json.JSONDecodeError, OSError):
+            shutil.rmtree(d, ignore_errors=True)
+            continue
+        if job.get("status") != "running":
+            continue
+        pid = job.get("pid")
+        if not pid or not _pid_alive(pid):
+            shutil.rmtree(d, ignore_errors=True)
+
+
+def create_job(config: dict) -> dict:
+    """Create a new job from parsed YAML config."""
+    steps = config.get("steps", [])
+    total_gens = sum(len(s.get("generate", [])) for s in steps)
+    job = {
+        "id": str(uuid.uuid4()),
+        "status": "pending",
+        "pid": None,
+        "created_at": datetime.now().isoformat(),
+        "started_at": None,
+        "completed_at": None,
+        "error": None,
+        "progress": {
+            "step": 0,
+            "total_steps": len(steps),
+            "generation": 0,
+            "total_generations": total_gens,
+            "percent": 0,
+        },
+        "outputs": [],
+        "config": config,
+    }
+    os.makedirs(_job_dir(job["id"]), exist_ok=True)
+    save_job(job)
+    return job
+
+
+# ---------------------------------------------------------------------------
 # Generation functions
 # ---------------------------------------------------------------------------
+
 
 def gen_custom_voice(model: Qwen3TTSModel, cfg: dict) -> None:
     text = cfg.get("text")
@@ -457,7 +614,9 @@ def gen_voice_clone(model: Qwen3TTSModel, cfg: dict, prompt=None) -> None:
         ref_text = None if x_vector_only else cfg.get("ref_text")
 
         if not x_vector_only and not ref_text:
-            die("voice-clone generation missing 'ref_text' (required unless x_vector_only: true)")
+            die(
+                "voice-clone generation missing 'ref_text' (required unless x_vector_only: true)"
+            )
 
         wavs, sr = model.generate_voice_clone(
             text=text,
@@ -471,39 +630,51 @@ def gen_voice_clone(model: Qwen3TTSModel, cfg: dict, prompt=None) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Pipeline
+# Pipeline (async job runner)
 # ---------------------------------------------------------------------------
 
-def run_step(step: dict, globals_cfg: dict) -> None:
+
+def _run_generation(mode: str, model, cfg: dict, clone_prompt=None) -> None:
+    """Dispatch a single generation to the right mode function."""
+    if mode == "custom-voice":
+        gen_custom_voice(model, cfg)
+        return
+    if mode == "voice-design":
+        gen_voice_design(model, cfg)
+        return
+    # voice-clone
+    use_prompt = clone_prompt if (clone_prompt and not cfg.get("ref_audio")) else None
+    gen_voice_clone(model, cfg, prompt=use_prompt)
+
+
+def run_step_tracked(step: dict, globals_cfg: dict, job: dict, gen_done: int) -> int:
+    """Run a single step with job progress tracking. Returns updated gen_done."""
     mode = step.get("mode")
     if mode not in VALID_MODES:
-        die(f"Invalid mode '{mode}'. Choose from: {VALID_MODES}")
+        raise ValueError(f"Invalid mode '{mode}'. Choose from: {VALID_MODES}")
 
     generations = step.get("generate")
     if not generations or not isinstance(generations, list):
-        die(f"Step mode '{mode}' has no 'generate' list")
+        raise ValueError(f"Step mode '{mode}' has no 'generate' list")
 
-    # Merge global defaults into step config (without generate list)
     step_cfg = {k: v for k, v in step.items() if k != "generate"}
 
     # Resolve model
-    model_size = merge_config(globals_cfg, step_cfg).get("model_size", "1.7b")
-    device = DEVICE
-    dtype = merge_config(globals_cfg, step_cfg).get("dtype", "float32")
-    flash_attn = merge_config(globals_cfg, step_cfg).get("flash_attn", False)
-    models_dir = merge_config(globals_cfg, step_cfg).get("models_dir", DEFAULT_MODELS_DIR)
+    merged = merge_config(globals_cfg, step_cfg)
+    model_size = merged.get("model_size", "1.7b")
+    dtype = merged.get("dtype", "float32")
+    flash_attn = merged.get("flash_attn", False)
+    models_dir = merged.get("models_dir", DEFAULT_MODELS_DIR)
 
     if mode == "custom-voice":
         model_key = f"custom-voice-{model_size}"
     elif mode == "voice-design":
         model_key = "voice-design-1.7b"
-    elif mode == "voice-clone":
-        model_key = f"base-{model_size}"
     else:
-        die(f"Unknown mode: {mode}")
+        model_key = f"base-{model_size}"
 
     model_path = resolve_model_path(models_dir, model_key)
-    model = load_model(model_path, device, resolve_dtype(dtype), flash_attn)
+    model = load_model(model_path, DEVICE, resolve_dtype(dtype), flash_attn)
 
     try:
         # For voice-clone with step-level ref_audio, create reusable prompt
@@ -522,53 +693,203 @@ def run_step(step: dict, globals_cfg: dict) -> None:
 
         for i, gen in enumerate(generations):
             cfg = merge_config(globals_cfg, step_cfg, gen)
-            print(f"[{mode}] Generating {i + 1}/{len(generations)}: {cfg.get('text', '')[:60]}...")
+            print(
+                f"[{mode}] Generating {i + 1}/{len(generations)}: {cfg.get('text', '')[:60]}..."
+            )
 
-            if mode == "custom-voice":
-                gen_custom_voice(model, cfg)
-            elif mode == "voice-design":
-                gen_voice_design(model, cfg)
-            elif mode == "voice-clone":
-                use_prompt = clone_prompt if (clone_prompt and not gen.get("ref_audio")) else None
-                gen_voice_clone(model, cfg, prompt=use_prompt)
+            _run_generation(mode, model, cfg, clone_prompt)
+
+            gen_done += 1
+            total = job["progress"]["total_generations"]
+            job["progress"]["generation"] = gen_done
+            job["progress"]["percent"] = int(gen_done * 100 / total) if total else 100
+            job["outputs"].append(cfg.get("output"))
+            save_job(job)
     finally:
         print(f"Unloading model: {model_key}")
         unload_model(model)
 
+    return gen_done
 
-def run_yaml(stream) -> None:
-    try:
-        config = yaml.safe_load(stream)
-    except yaml.YAMLError as e:
-        die(f"Invalid YAML: {e}")
 
-    if not isinstance(config, dict):
-        die("YAML config must be a mapping")
+def run_pipeline(job: dict) -> None:
+    """Run the full TTS pipeline as a background job."""
+    cleanup_stale_jobs()
 
-    steps = config.get("steps")
-    if not steps or not isinstance(steps, list):
-        die("YAML config must have a 'steps' list")
+    job["status"] = "running"
+    job["pid"] = os.getpid()
+    job["started_at"] = datetime.now().isoformat()
+    save_job(job)
 
+    config = job["config"]
+    steps = config.get("steps", [])
     globals_cfg = {k: v for k, v in config.items() if k != "steps"}
+    gen_done = 0
 
-    for i, step in enumerate(steps):
-        if not isinstance(step, dict):
-            die(f"Step {i + 1} must be a mapping")
-        print(f"\n=== Step {i + 1}/{len(steps)}: {step.get('mode', '?')} ===")
-        run_step(step, globals_cfg)
+    try:
+        for i, step in enumerate(steps):
+            if not isinstance(step, dict):
+                raise ValueError(f"Step {i + 1} must be a mapping")
 
-    print(f"\nDone. {len(steps)} step(s) completed.")
+            job["progress"]["step"] = i + 1
+            save_job(job)
+
+            print(f"\n=== Step {i + 1}/{len(steps)}: {step.get('mode', '?')} ===")
+            gen_done = run_step_tracked(step, globals_cfg, job, gen_done)
+
+        job["status"] = "completed"
+        job["completed_at"] = datetime.now().isoformat()
+        save_job(job)
+        print(f"\nDone. {len(steps)} step(s) completed.")
+        delete_job(job)
+
+    except Exception as e:
+        job["status"] = "failed"
+        job["error"] = str(e)
+        job["completed_at"] = datetime.now().isoformat()
+        save_job(job)
+        print(f"\nFailed: {e}")
+        delete_job(job)
+
+
+def daemonize() -> None:
+    """Detach from SSH session: setsid + redirect stdio to /dev/null."""
+    os.setsid()
+    devnull = os.open(os.devnull, os.O_RDWR)
+    os.dup2(devnull, 0)
+    os.dup2(devnull, 1)
+    os.dup2(devnull, 2)
+    os.close(devnull)
+    sys.stdin = open(os.devnull, "r")
+    sys.stdout = open(os.devnull, "w")
+    sys.stderr = open(os.devnull, "w")
+    # Ignore SIGHUP so SSH disconnect doesn't kill us
+    signal.signal(signal.SIGHUP, signal.SIG_IGN)
 
 
 # ---------------------------------------------------------------------------
 # Subcommands
 # ---------------------------------------------------------------------------
 
+
 def cmd_list_speakers() -> None:
     print("Available speakers for CustomVoice models:")
     print()
     for name, (gender, lang, desc) in SPEAKER_INFO.items():
         print(f"  {name:<12} {gender:<8} {lang:<10} {desc}")
+
+
+def cmd_list_jobs(args: argparse.Namespace) -> None:
+    jobs_dir = Path(JOBS_DIR)
+    if not jobs_dir.exists():
+        if getattr(args, "json", False):
+            print("[]")
+        else:
+            print("No jobs.")
+        return
+
+    jobs = []
+    for d in sorted(jobs_dir.iterdir()):
+        if not d.is_dir():
+            continue
+        json_path = d / "job.json"
+        try:
+            with open(json_path) as fh:
+                job = json.load(fh)
+        except (json.JSONDecodeError, OSError):
+            continue
+        # Check if running worker is actually alive
+        if job.get("status") == "running":
+            pid = job.get("pid")
+            if pid and not _pid_alive(pid):
+                job["status"] = "dead"
+        jobs.append(job)
+
+    if not jobs:
+        if getattr(args, "json", False):
+            print("[]")
+        else:
+            print("No jobs.")
+        return
+
+    if getattr(args, "json", False):
+        print(json.dumps(jobs, indent=2))
+        return
+
+    # Table output
+    print(f"{'ID':<10} {'STATUS':<12} {'PROGRESS':<10} {'CREATED':<20} {'STEP'}")
+    print("-" * 70)
+    for job in jobs:
+        short_id = job["id"][:8]
+        status = job.get("status", "?")
+        p = job.get("progress", {})
+        pct = f"{p.get('percent', 0)}%"
+        gen = f"{p.get('generation', 0)}/{p.get('total_generations', 0)}"
+        progress = f"{pct} ({gen})"
+        created = job.get("created_at", "?")[:19]
+        step = f"{p.get('step', 0)}/{p.get('total_steps', 0)}"
+        print(f"{short_id:<10} {status:<12} {progress:<10} {created:<20} {step}")
+
+
+def cmd_get_job(args: argparse.Namespace) -> None:
+    job = load_job(args.id)
+    # Check if running worker is actually alive
+    if job.get("status") in ("running", "cancelling"):
+        pid = job.get("pid")
+        if pid and not _pid_alive(pid):
+            job["status"] = "dead"
+    print(json.dumps(job, indent=2))
+
+
+def cmd_cancel_job(args: argparse.Namespace) -> None:
+    job = load_job(args.id)
+    if job.get("status") not in ("pending", "running"):
+        die(f"Cannot cancel job with status '{job.get('status')}'")
+
+    pid = job.get("pid")
+    if pid and _pid_alive(pid):
+        try:
+            os.kill(pid, signal.SIGTERM)
+        except OSError:
+            pass
+
+    job["status"] = "cancelled"
+    job["completed_at"] = datetime.now().isoformat()
+    save_job(job)
+    delete_job(job)
+    print(f"Cancelled job {job['id'][:8]}")
+
+
+def cmd_get_job_log(args: argparse.Namespace) -> None:
+    resolved = _resolve_job_id(args.id)
+    log_path = _job_log_path(resolved)
+
+    if not log_path.exists() or log_path.stat().st_size == 0:
+        print("No log output yet.")
+        return
+
+    n = args.n or 20
+
+    lines = _tail(log_path, n)
+    for line in lines:
+        sys.stdout.write(line)
+    sys.stdout.flush()
+
+    if not args.follow:
+        return
+
+    try:
+        with open(log_path) as f:
+            f.seek(0, 2)
+            while True:
+                line = f.readline()
+                if line:
+                    sys.stdout.write(line)
+                    sys.stdout.flush()
+                    continue
+                time.sleep(0.5)
+    except (BrokenPipeError, KeyboardInterrupt):
+        pass
 
 
 def cmd_tokenize(args: argparse.Namespace) -> None:
@@ -643,8 +964,44 @@ def cmd_log(args: argparse.Namespace) -> None:
 
 
 # ---------------------------------------------------------------------------
+# YAML validation
+# ---------------------------------------------------------------------------
+
+
+def validate_config(config: dict) -> None:
+    """Validate YAML config before creating a job. Dies on errors."""
+    if not isinstance(config, dict):
+        die("YAML config must be a mapping")
+
+    steps = config.get("steps")
+    if not steps or not isinstance(steps, list):
+        die("YAML config must have a 'steps' list")
+
+    for i, step in enumerate(steps):
+        if not isinstance(step, dict):
+            die(f"Step {i + 1} must be a mapping")
+
+        mode = step.get("mode")
+        if mode not in VALID_MODES:
+            die(f"Step {i + 1}: invalid mode '{mode}'. Choose from: {VALID_MODES}")
+
+        generations = step.get("generate")
+        if not generations or not isinstance(generations, list):
+            die(f"Step {i + 1}: mode '{mode}' has no 'generate' list")
+
+        for j, gen in enumerate(generations):
+            if not isinstance(gen, dict):
+                die(f"Step {i + 1}, generation {j + 1}: must be a mapping")
+            if not gen.get("text"):
+                die(f"Step {i + 1}, generation {j + 1}: missing 'text'")
+            if not gen.get("output"):
+                die(f"Step {i + 1}, generation {j + 1}: missing 'output'")
+
+
+# ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
+
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
@@ -652,25 +1009,76 @@ def build_parser() -> argparse.ArgumentParser:
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=__doc__,
     )
-    parser.add_argument("--models-dir", "-m", default=DEFAULT_MODELS_DIR, help=f"Base directory for models (default: {DEFAULT_MODELS_DIR})")
+    parser.add_argument(
+        "--models-dir",
+        "-m",
+        default=DEFAULT_MODELS_DIR,
+        help=f"Base directory for models (default: {DEFAULT_MODELS_DIR})",
+    )
 
     sub = parser.add_subparsers(dest="command")
 
     p_py = sub.add_parser("print-yaml", help="Print a template YAML config to stdout")
-    p_py.set_defaults(func=lambda a: print(YAML_TEMPLATE))
+    p_py.set_defaults(func=lambda _: print(YAML_TEMPLATE))
 
     p_ls = sub.add_parser("list-speakers", help="List available preset speakers")
-    p_ls.set_defaults(func=lambda a: cmd_list_speakers())
+    p_ls.set_defaults(func=lambda _: cmd_list_speakers())
+
+    p_lj = sub.add_parser("list-jobs", help="List all TTS jobs")
+    p_lj.add_argument("--json", action="store_true", default=False, help="JSON output")
+    p_lj.set_defaults(func=cmd_list_jobs)
+
+    p_gj = sub.add_parser("get-job", help="Get job details as JSON")
+    p_gj.add_argument("id", help="Job UUID (or prefix)")
+    p_gj.set_defaults(func=cmd_get_job)
+
+    p_cj = sub.add_parser("cancel-job", help="Cancel a running job")
+    p_cj.add_argument("id", help="Job UUID (or prefix)")
+    p_cj.set_defaults(func=cmd_cancel_job)
+
+    p_gjl = sub.add_parser("get-job-log", help="View job log output")
+    p_gjl.add_argument("id", help="Job UUID (or prefix)")
+    p_gjl.add_argument(
+        "-f",
+        "--follow",
+        action="store_true",
+        default=False,
+        help="Follow log output (like tail -f)",
+    )
+    p_gjl.add_argument(
+        "-n", type=int, default=20, help="Number of lines to show (default: 20)"
+    )
+    p_gjl.set_defaults(func=cmd_get_job_log)
 
     p_log = sub.add_parser("log", help="View TTS logs")
-    p_log.add_argument("-f", "--follow", action="store_true", default=False, help="Follow log output (like tail -f)")
-    p_log.add_argument("-n", type=int, default=20, help="Number of lines to show (default: 20)")
+    p_log.add_argument(
+        "-f",
+        "--follow",
+        action="store_true",
+        default=False,
+        help="Follow log output (like tail -f)",
+    )
+    p_log.add_argument(
+        "-n", type=int, default=20, help="Number of lines to show (default: 20)"
+    )
     p_log.set_defaults(func=cmd_log)
 
-    p_tok = sub.add_parser("tokenize", help="Encode audio to speech tokens and decode back")
+    p_tok = sub.add_parser(
+        "tokenize", help="Encode audio to speech tokens and decode back"
+    )
     p_tok.add_argument("audio", help="Input audio file path")
-    p_tok.add_argument("--output", "-o", default="output.wav", help="Output file path (default: output.wav)")
-    p_tok.add_argument("--tokenizer", default="12hz", choices=["12hz"], help="Tokenizer variant (default: 12hz)")
+    p_tok.add_argument(
+        "--output",
+        "-o",
+        default="output.wav",
+        help="Output file path (default: output.wav)",
+    )
+    p_tok.add_argument(
+        "--tokenizer",
+        default="12hz",
+        choices=["12hz"],
+        help="Tokenizer variant (default: 12hz)",
+    )
     p_tok.set_defaults(func=cmd_tokenize)
 
     return parser
@@ -684,14 +1092,41 @@ def main() -> None:
         args.func(args)
         return
 
-    # No subcommand → read YAML from stdin
+    # No subcommand → read YAML from stdin, submit async job
     if sys.stdin.isatty():
         parser.print_help()
         sys.exit(1)
 
-    log_mgr = setup_logging()
+    raw = sys.stdin.read()
     try:
-        run_yaml(sys.stdin)
+        config = yaml.safe_load(raw)
+    except yaml.YAMLError as e:
+        die(f"Invalid YAML: {e}")
+
+    validate_config(config)
+    job = create_job(config)
+
+    pid = os.fork()
+    if pid > 0:
+        # Parent: print job summary, exit immediately
+        print(
+            json.dumps(
+                {
+                    "id": job["id"],
+                    "status": job["status"],
+                    "total_steps": job["progress"]["total_steps"],
+                    "total_generations": job["progress"]["total_generations"],
+                }
+            )
+        )
+        sys.exit(0)
+
+    # Child: become daemon
+    daemonize()
+
+    log_mgr = setup_logging(job_log_path=str(_job_log_path(job["id"])))
+    try:
+        run_pipeline(job)
     finally:
         log_mgr.close()
 

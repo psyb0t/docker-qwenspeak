@@ -33,6 +33,9 @@ RUN pip3 install --no-cache-dir --break-system-packages -r /tmp/requirements.txt
 RUN mkdir -p /var/log/tts && chmod 777 /var/log/tts
 VOLUME /var/log/tts
 
+# Jobs directory (ephemeral, not a volume)
+RUN mkdir -p /jobs && chmod 777 /jobs
+
 # App
 COPY tts.py /app/tts.py
 RUN cat <<'EOF' > /usr/local/bin/tts && chmod +x /usr/local/bin/tts

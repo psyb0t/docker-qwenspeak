@@ -148,7 +148,7 @@ Device is controlled by the `PROCESSING_UNIT` env var (not in YAML). Set via `--
 
 ## How It Works
 
-All generation is driven by YAML configs piped via stdin. Get a template, fill it in, pipe it back.
+All generation is driven by YAML configs piped via stdin. Jobs run asynchronously — submit a config, get a job UUID back immediately, poll for progress, download results when done.
 
 ```bash
 # Get the YAML template
@@ -157,10 +157,26 @@ ssh tts@host "tts print-yaml" > job.yaml
 # Edit it
 vim job.yaml
 
-# Run it
+# Submit (returns immediately with job ID)
 ssh tts@host "tts" < job.yaml
+# {"id": "550e8400-...", "status": "pending", "total_steps": 3, "total_generations": 7}
 
-# Download results
+# Check progress
+ssh tts@host "tts get-job 550e8400"
+
+# View job log
+ssh tts@host "tts get-job-log 550e8400"
+
+# Follow job log (like tail -f)
+ssh tts@host "tts get-job-log 550e8400 -f"
+
+# List all jobs
+ssh tts@host "tts list-jobs"
+
+# Cancel
+ssh tts@host "tts cancel-job 550e8400"
+
+# Download results when done
 ssh tts@host "get hello.wav" > hello.wav
 ```
 
@@ -228,7 +244,7 @@ The YAML pipeline loads each model once and runs all its generations before movi
 **Emotion trick for cloned voices:** upload reference files with different emotions and use separate steps:
 
 ```bash
-ssh tts@host "mkdir refs"
+ssh tts@host "create-dir refs"
 ssh tts@host "put refs/happy.wav" < me_happy.wav
 ssh tts@host "put refs/angry.wav" < me_angry.wav
 ```
@@ -251,6 +267,30 @@ steps:
       - text: "This is unacceptable"
         output: angry1.wav
 ```
+
+### Job Management
+
+```bash
+# List all jobs
+ssh tts@host "tts list-jobs"
+ssh tts@host "tts list-jobs --json"
+
+# Get job details
+ssh tts@host "tts get-job <uuid-or-prefix>"
+
+# View job log
+ssh tts@host "tts get-job-log <uuid-or-prefix>"
+
+# Follow job log (like tail -f)
+ssh tts@host "tts get-job-log <uuid-or-prefix> -f"
+
+# Cancel a running job
+ssh tts@host "tts cancel-job <uuid-or-prefix>"
+```
+
+Job statuses: `pending` → `running` → `completed` | `failed` | `cancelled`
+
+Jobs are ephemeral — automatically cleaned up when completed/failed/cancelled and on container restart. You can use UUID prefixes (e.g. first 8 chars) for convenience.
 
 ### Other Subcommands
 
@@ -342,15 +382,23 @@ All of these can be set at any level. Lower levels override higher ones.
 
 All file paths are relative to /work. Traversal attempts get blocked, absolute paths get remapped under /work.
 
-| Command  | Description                                             |
-| -------- | ------------------------------------------------------- |
-| `put`    | Upload file from stdin                                  |
-| `get`    | Download file to stdout                                 |
-| `ls`     | List /work or a subdirectory (`--json` for JSON output) |
-| `rm`     | Delete a file                                           |
-| `mkdir`  | Create directory (recursive)                            |
-| `rmdir`  | Remove empty directory                                  |
-| `rrmdir` | Remove directory and everything in it recursively       |
+| Command                      | Description                                             |
+| ---------------------------- | ------------------------------------------------------- |
+| `put <path>`                 | Upload file from stdin                                  |
+| `get <path>`                 | Download file to stdout                                 |
+| `list-files [path] [--json]` | List /work or a subdirectory (`--json` for JSON output) |
+| `remove-file <path>`         | Delete a file                                           |
+| `create-dir <path>`          | Create directory (recursive)                            |
+| `remove-dir <path>`          | Remove empty directory                                  |
+| `remove-dir-recursive <path>`| Remove directory and everything in it recursively       |
+| `move-file <src> <dst>`      | Move or rename a file                                   |
+| `copy-file <src> <dst>`      | Copy a file                                             |
+| `file-info <path>`           | File metadata as JSON (size, modified, mode, owner)     |
+| `file-exists <path>`         | Check if file exists (prints true/false)                |
+| `file-hash <path>`           | SHA-256 hash of a file                                  |
+| `disk-usage [path]`          | Total bytes used by file or directory tree              |
+| `search-files <pattern>`     | Glob search under /work (supports `**` recursive)       |
+| `append-file <path>`         | Append stdin to an existing file                        |
 
 ## SSH Client Config
 
