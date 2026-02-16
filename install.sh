@@ -23,7 +23,7 @@ if [ ! -f "$QWENSPEAK_HOME/.env" ]; then
 QWENSPEAK_PORT=2222
 QWENSPEAK_MODELS_DIR=$QWENSPEAK_HOME/models
 QWENSPEAK_LOGS_DIR=$QWENSPEAK_HOME/logs
-QWENSPEAK_DEVICE=cpu
+QWENSPEAK_PROCESSING_UNIT=cpu
 QWENSPEAK_GPUS=all
 QWENSPEAK_CPUS=0
 QWENSPEAK_MEMORY=0
@@ -40,8 +40,7 @@ services:
     environment:
       - LOCKBOX_UID=${REAL_UID}
       - LOCKBOX_GID=${REAL_GID}
-      - TTS_DEVICE=\${QWENSPEAK_DEVICE:-cpu}
-      - NVIDIA_VISIBLE_DEVICES=\${QWENSPEAK_GPUS:-all}
+      - PROCESSING_UNIT=\${QWENSPEAK_PROCESSING_UNIT:-cpu}
     volumes:
       - ./authorized_keys:/etc/lockbox/authorized_keys:ro
       - ./host_keys:/etc/lockbox/host_keys
@@ -54,6 +53,32 @@ services:
     restart: unless-stopped
 EOF
 
+cat > "$QWENSPEAK_HOME/docker-compose.cuda.yml" << EOF
+services:
+  qwenspeak:
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=\${QWENSPEAK_GPUS:-all}
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              capabilities: [gpu]
+EOF
+
+cat > "$QWENSPEAK_HOME/docker-compose.rocm.yml" << EOF
+services:
+  qwenspeak:
+    environment:
+      - HIP_VISIBLE_DEVICES=\${QWENSPEAK_GPUS:-all}
+    devices:
+      - /dev/kfd:/dev/kfd
+      - /dev/dri:/dev/dri
+    group_add:
+      - video
+      - render
+EOF
+
 cat > "$INSTALL_PATH" << 'SCRIPT'
 #!/bin/bash
 
@@ -61,7 +86,13 @@ QWENSPEAK_HOME="__QWENSPEAK_HOME__"
 ENV_FILE="$QWENSPEAK_HOME/.env"
 
 compose() {
-    docker compose --env-file "$ENV_FILE" -f "$QWENSPEAK_HOME/docker-compose.yml" "$@"
+    . "$ENV_FILE"
+    local overlay=""
+    case "${QWENSPEAK_PROCESSING_UNIT:-cpu}" in
+        cuda*) overlay="-f $QWENSPEAK_HOME/docker-compose.cuda.yml" ;;
+        rocm*) overlay="-f $QWENSPEAK_HOME/docker-compose.rocm.yml" ;;
+    esac
+    docker compose --env-file "$ENV_FILE" -f "$QWENSPEAK_HOME/docker-compose.yml" $overlay "$@"
 }
 
 # Convert size string (e.g. 4g, 512m) to bytes
@@ -109,15 +140,15 @@ usage() {
     echo "Usage: qwenspeak <command>"
     echo ""
     echo "Commands:"
-    echo "  start [-d] [-p PORT] [-m MODELS_DIR] [-l LOGS_DIR] [-g DEVICE] [--gpus GPUS] [-c CPUS] [-r MEMORY] [-s SWAP]"
+    echo "  start [-d] [--port PORT] [-m MODELS_DIR] [-l LOGS_DIR] [--processing-unit UNIT] [--gpus GPUS] [--cpus CPUS] [--memory MEMORY] [--swap SWAP]"
     echo "                        Start qwenspeak (-d for detached)"
     echo "                        -m  Models directory"
     echo "                        -l  Logs directory"
-    echo "                        -g  Device (cpu, cuda, cuda:0, etc.)"
+    echo "                        --processing-unit  Processing unit (cpu, cuda, rocm)"
     echo "                        --gpus  GPUs to expose (all, 0, 0,1, etc.)"
-    echo "                        -c  CPU limit (e.g. 4, 0.5) - 0 = unlimited"
-    echo "                        -r  RAM limit (e.g. 4g, 512m) - 0 = unlimited"
-    echo "                        -s  Swap limit (e.g. 2g, 512m) - 0 = no swap"
+    echo "                        --cpus  CPU limit (e.g. 4, 0.5) - 0 = unlimited"
+    echo "                        --memory  RAM limit (e.g. 4g, 512m) - 0 = unlimited"
+    echo "                        --swap  Swap limit (e.g. 2g, 512m) - 0 = no swap"
     echo "  stop                  Stop qwenspeak"
     echo "  upgrade               Pull latest image and restart if needed"
     echo "  uninstall             Stop qwenspeak and remove everything"
@@ -132,14 +163,14 @@ case "${1:-}" in
         while [ $# -gt 0 ]; do
             case "$1" in
                 -d) DETACHED=true ;;
-                -p) shift; sed -i "s/^QWENSPEAK_PORT=.*/QWENSPEAK_PORT=$1/" "$ENV_FILE" ;;
+                --port) shift; sed -i "s/^QWENSPEAK_PORT=.*/QWENSPEAK_PORT=$1/" "$ENV_FILE" ;;
                 -m) shift; sed -i "s|^QWENSPEAK_MODELS_DIR=.*|QWENSPEAK_MODELS_DIR=$1|" "$ENV_FILE" ;;
                 -l) shift; sed -i "s|^QWENSPEAK_LOGS_DIR=.*|QWENSPEAK_LOGS_DIR=$1|" "$ENV_FILE" ;;
-                -g) shift; sed -i "s|^QWENSPEAK_DEVICE=.*|QWENSPEAK_DEVICE=$1|" "$ENV_FILE" ;;
+                --processing-unit) shift; sed -i "s|^QWENSPEAK_PROCESSING_UNIT=.*|QWENSPEAK_PROCESSING_UNIT=$1|" "$ENV_FILE" ;;
                 --gpus) shift; sed -i "s|^QWENSPEAK_GPUS=.*|QWENSPEAK_GPUS=$1|" "$ENV_FILE" ;;
-                -c) shift; sed -i "s/^QWENSPEAK_CPUS=.*/QWENSPEAK_CPUS=$1/" "$ENV_FILE" ;;
-                -r) shift; sed -i "s/^QWENSPEAK_MEMORY=.*/QWENSPEAK_MEMORY=$1/" "$ENV_FILE" ;;
-                -s) shift; sed -i "s/^QWENSPEAK_SWAP=.*/QWENSPEAK_SWAP=$1/" "$ENV_FILE" ;;
+                --cpus) shift; sed -i "s/^QWENSPEAK_CPUS=.*/QWENSPEAK_CPUS=$1/" "$ENV_FILE" ;;
+                --memory) shift; sed -i "s/^QWENSPEAK_MEMORY=.*/QWENSPEAK_MEMORY=$1/" "$ENV_FILE" ;;
+                --swap) shift; sed -i "s/^QWENSPEAK_SWAP=.*/QWENSPEAK_SWAP=$1/" "$ENV_FILE" ;;
             esac
             shift
         done

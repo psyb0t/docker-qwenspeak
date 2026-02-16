@@ -115,7 +115,7 @@ echo ""
 echo "=== Starting container ==="
 GPU_ARGS=""
 if [ "$WITH_GPU" = true ]; then
-    GPU_ARGS="--gpus all -e TTS_DEVICE=cuda"
+    GPU_ARGS="--gpus all -e PROCESSING_UNIT=cuda"
     echo "(GPU mode enabled)"
 fi
 docker run -d \
@@ -195,7 +195,7 @@ if [ "$WITH_GPU" = true ]; then
     echo "=== Running GPU tests ==="
 
     GPU_TESTS=(
-        "echo \$TTS_DEVICE|cuda||TTS_DEVICE is set to cuda"
+        "echo \$PROCESSING_UNIT|cuda||PROCESSING_UNIT is set to cuda"
         "ls /usr/local/cuda/lib64/libcudart*|libcudart||CUDA runtime library exists"
         "ls /usr/lib/x86_64-linux-gnu/libcudnn*|libcudnn||cuDNN library exists"
         "python3 -c \"import torch; print(torch.cuda.is_available())\"|True||torch.cuda.is_available() returns True"

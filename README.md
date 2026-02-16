@@ -14,7 +14,7 @@ Built on top of [psyb0t/lockbox](https://github.com/psyb0t/docker-lockbox) - see
 - **Voice design** - describe the voice you want in plain English and it generates it
 - **Voice cloning** - clone any voice from a 3-second audio sample
 - **10 languages** - Chinese, English, Japanese, Korean, German, French, Russian, Portuguese, Spanish, Italian
-- **CPU & GPU** - runs on CPU by default, NVIDIA GPU via `--gpus all` + `TTS_DEVICE=cuda`
+- **CPU & GPU** - runs on CPU by default, NVIDIA GPU via `--processing-unit cuda`
 
 ## Models
 
@@ -71,9 +71,9 @@ qwenspeak start -d -m /path/to/your/models
 qwenspeak start -d                        # foreground or detached
 qwenspeak start -d -p 2223                # custom port (default 2222)
 qwenspeak start -d -m /mnt/hdd/models     # custom models directory
-qwenspeak start -d -g cuda                # GPU mode (requires NVIDIA Container Toolkit)
-qwenspeak start -d -g cuda --gpus 0       # use only GPU 0
-qwenspeak start -d -g cuda --gpus 0,1     # use GPUs 0 and 1
+qwenspeak start -d --processing-unit cuda                # GPU mode (requires NVIDIA Container Toolkit)
+qwenspeak start -d --processing-unit cuda --gpus 0       # use only GPU 0
+qwenspeak start -d --processing-unit cuda --gpus 0,1     # use GPUs 0 and 1
 qwenspeak start -d -r 4g -s 2g -c 4       # 4GB RAM, 2GB swap, 4 CPUs
 qwenspeak stop                             # stop
 qwenspeak upgrade                          # pull latest image, asks to stop/restart if running
@@ -122,7 +122,7 @@ docker run -d \
   -p 2222:22 \
   -e "LOCKBOX_UID=$(id -u)" \
   -e "LOCKBOX_GID=$(id -g)" \
-  -e "TTS_DEVICE=cuda" \
+  -e "PROCESSING_UNIT=cuda" \
   -v $(pwd)/authorized_keys:/etc/lockbox/authorized_keys:ro \
   -v $(pwd)/host_keys:/etc/lockbox/host_keys \
   -v $(pwd)/work:/work \
@@ -134,12 +134,11 @@ docker run -d \
 With GPU you can use `bfloat16` for ~half the memory and faster inference:
 
 ```yaml
-device: cuda
 dtype: bfloat16
 flash_attn: true
 ```
 
-Device is controlled by the `TTS_DEVICE` env var (not in YAML).
+Device is controlled by the `PROCESSING_UNIT` env var (not in YAML). Set via `--processing-unit cuda` on the installer or `-e PROCESSING_UNIT=cuda` on docker run.
 
 ## Allowed Commands
 

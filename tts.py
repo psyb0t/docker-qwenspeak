@@ -86,7 +86,7 @@ GENERATION_DEFAULTS = {
     "no_sample": False,
 }
 
-DEVICE = os.environ.get("TTS_DEVICE", "cpu")
+DEVICE = os.environ.get("PROCESSING_UNIT", "cpu")
 
 GLOBAL_DEFAULTS = {
     "dtype": "float32",
