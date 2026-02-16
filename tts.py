@@ -87,7 +87,7 @@ GENERATION_DEFAULTS = {
 }
 
 GLOBAL_DEFAULTS = {
-    "device": "cpu",
+    "device": os.environ.get("TTS_DEVICE", "cpu"),
     "dtype": "float32",
     "models_dir": DEFAULT_MODELS_DIR,
     "flash_attn": False,
@@ -111,7 +111,7 @@ YAML_TEMPLATE = """\
 # Pipe this to tts via stdin: ssh tts@host "tts" < job.yaml
 
 # Global settings (apply to all steps unless overridden)
-device: cpu
+device: cpu                # cpu, cuda, cuda:0, etc. (default: TTS_DEVICE env var)
 dtype: float32             # float32, float16, bfloat16 (float16/bfloat16 GPU only)
 models_dir: /models
 flash_attn: false          # FlashAttention-2 (GPU only)

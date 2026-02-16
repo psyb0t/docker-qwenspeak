@@ -1,7 +1,18 @@
+FROM nvidia/cuda:12.6.3-cudnn-runtime-ubuntu24.04 AS cuda-runtime
+
 FROM psyb0t/lockbox
 
 ENV LOCKBOX_USER=tts
 ENV TTS_LOG_RETENTION=7d
+ENV TTS_DEVICE=cpu
+ENV NVIDIA_VISIBLE_DEVICES=all
+ENV NVIDIA_DRIVER_CAPABILITIES=compute,utility
+
+# CUDA runtime + cuDNN libs
+COPY --from=cuda-runtime /usr/local/cuda/lib64/ /usr/local/cuda/lib64/
+COPY --from=cuda-runtime /usr/lib/x86_64-linux-gnu/libcudnn* /usr/lib/x86_64-linux-gnu/
+COPY --from=cuda-runtime /usr/lib/x86_64-linux-gnu/libnccl* /usr/lib/x86_64-linux-gnu/
+RUN echo "/usr/local/cuda/lib64" > /etc/ld.so.conf.d/cuda.conf && ldconfig
 
 # System deps for audio processing
 RUN apt-get update && \

@@ -15,13 +15,16 @@ fi
 
 QWENSPEAK_HOME="$REAL_HOME/.qwenspeak"
 
-mkdir -p "$QWENSPEAK_HOME/work" "$QWENSPEAK_HOME/host_keys" "$QWENSPEAK_HOME/models"
+mkdir -p "$QWENSPEAK_HOME/work" "$QWENSPEAK_HOME/host_keys" "$QWENSPEAK_HOME/models" "$QWENSPEAK_HOME/logs"
 touch "$QWENSPEAK_HOME/authorized_keys"
 
 if [ ! -f "$QWENSPEAK_HOME/.env" ]; then
     cat > "$QWENSPEAK_HOME/.env" << ENVEOF
 QWENSPEAK_PORT=2222
 QWENSPEAK_MODELS_DIR=$QWENSPEAK_HOME/models
+QWENSPEAK_LOGS_DIR=$QWENSPEAK_HOME/logs
+QWENSPEAK_DEVICE=cpu
+QWENSPEAK_GPUS=all
 QWENSPEAK_CPUS=0
 QWENSPEAK_MEMORY=0
 QWENSPEAK_SWAP=0
@@ -37,11 +40,14 @@ services:
     environment:
       - LOCKBOX_UID=${REAL_UID}
       - LOCKBOX_GID=${REAL_GID}
+      - TTS_DEVICE=\${QWENSPEAK_DEVICE:-cpu}
+      - NVIDIA_VISIBLE_DEVICES=\${QWENSPEAK_GPUS:-all}
     volumes:
       - ./authorized_keys:/etc/lockbox/authorized_keys:ro
       - ./host_keys:/etc/lockbox/host_keys
       - ./work:/work
       - \${QWENSPEAK_MODELS_DIR:-./models}:/models:ro
+      - \${QWENSPEAK_LOGS_DIR:-./logs}:/var/log/tts
     cpus: \${QWENSPEAK_CPUS:-0}
     mem_limit: \${QWENSPEAK_MEMORY:-0}
     memswap_limit: \${QWENSPEAK_MEMSWAP:-0}
@@ -103,9 +109,12 @@ usage() {
     echo "Usage: qwenspeak <command>"
     echo ""
     echo "Commands:"
-    echo "  start [-d] [-p PORT] [-m MODELS_DIR] [-c CPUS] [-r MEMORY] [-s SWAP]"
+    echo "  start [-d] [-p PORT] [-m MODELS_DIR] [-l LOGS_DIR] [-g DEVICE] [--gpus GPUS] [-c CPUS] [-r MEMORY] [-s SWAP]"
     echo "                        Start qwenspeak (-d for detached)"
     echo "                        -m  Models directory"
+    echo "                        -l  Logs directory"
+    echo "                        -g  Device (cpu, cuda, cuda:0, etc.)"
+    echo "                        --gpus  GPUs to expose (all, 0, 0,1, etc.)"
     echo "                        -c  CPU limit (e.g. 4, 0.5) - 0 = unlimited"
     echo "                        -r  RAM limit (e.g. 4g, 512m) - 0 = unlimited"
     echo "                        -s  Swap limit (e.g. 2g, 512m) - 0 = no swap"
@@ -125,6 +134,9 @@ case "${1:-}" in
                 -d) DETACHED=true ;;
                 -p) shift; sed -i "s/^QWENSPEAK_PORT=.*/QWENSPEAK_PORT=$1/" "$ENV_FILE" ;;
                 -m) shift; sed -i "s|^QWENSPEAK_MODELS_DIR=.*|QWENSPEAK_MODELS_DIR=$1|" "$ENV_FILE" ;;
+                -l) shift; sed -i "s|^QWENSPEAK_LOGS_DIR=.*|QWENSPEAK_LOGS_DIR=$1|" "$ENV_FILE" ;;
+                -g) shift; sed -i "s|^QWENSPEAK_DEVICE=.*|QWENSPEAK_DEVICE=$1|" "$ENV_FILE" ;;
+                --gpus) shift; sed -i "s|^QWENSPEAK_GPUS=.*|QWENSPEAK_GPUS=$1|" "$ENV_FILE" ;;
                 -c) shift; sed -i "s/^QWENSPEAK_CPUS=.*/QWENSPEAK_CPUS=$1/" "$ENV_FILE" ;;
                 -r) shift; sed -i "s/^QWENSPEAK_MEMORY=.*/QWENSPEAK_MEMORY=$1/" "$ENV_FILE" ;;
                 -s) shift; sed -i "s/^QWENSPEAK_SWAP=.*/QWENSPEAK_SWAP=$1/" "$ENV_FILE" ;;
@@ -221,6 +233,7 @@ echo "  Command:         $INSTALL_PATH"
 echo "  Authorized keys: $QWENSPEAK_HOME/authorized_keys"
 echo "  Work directory:  $QWENSPEAK_HOME/work"
 echo "  Models directory: $QWENSPEAK_HOME/models/"
+echo "  Logs directory:  $QWENSPEAK_HOME/logs/"
 echo ""
 echo "Add your SSH public key(s) to the authorized_keys file and run:"
 echo ""

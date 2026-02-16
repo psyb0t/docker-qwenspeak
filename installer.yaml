@@ -13,3 +13,15 @@ volumes:
     mount: /var/log/tts
     default: ./logs
     description: Logs directory
+
+environment:
+  - flag: -g
+    env: DEVICE
+    container_env: TTS_DEVICE
+    default: cpu
+    description: Device (cpu, cuda, cuda:0, etc.)
+  - flag: --gpus
+    env: GPUS
+    container_env: NVIDIA_VISIBLE_DEVICES
+    default: all
+    description: GPUs to expose (all, 0, 0,1, etc.)

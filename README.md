@@ -14,7 +14,7 @@ Built on top of [psyb0t/lockbox](https://github.com/psyb0t/docker-lockbox) - see
 - **Voice design** - describe the voice you want in plain English and it generates it
 - **Voice cloning** - clone any voice from a 3-second audio sample
 - **10 languages** - Chinese, English, Japanese, Korean, German, French, Russian, Portuguese, Spanish, Italian
-- **CPU** - runs on CPU out of the box, no GPU required (yet)
+- **CPU & GPU** - runs on CPU by default, NVIDIA GPU via `--gpus all` + `TTS_DEVICE=cuda`
 
 ## Models
 
@@ -71,6 +71,9 @@ qwenspeak start -d -m /path/to/your/models
 qwenspeak start -d                        # foreground or detached
 qwenspeak start -d -p 2223                # custom port (default 2222)
 qwenspeak start -d -m /mnt/hdd/models     # custom models directory
+qwenspeak start -d -g cuda                # GPU mode (requires NVIDIA Container Toolkit)
+qwenspeak start -d -g cuda --gpus 0       # use only GPU 0
+qwenspeak start -d -g cuda --gpus 0,1     # use GPUs 0 and 1
 qwenspeak start -d -r 4g -s 2g -c 4       # 4GB RAM, 2GB swap, 4 CPUs
 qwenspeak stop                             # stop
 qwenspeak upgrade                          # pull latest image, asks to stop/restart if running
@@ -106,6 +109,37 @@ docker run -d \
 
 ssh -p 2222 tts@localhost "tts list-speakers"
 ```
+
+### GPU (NVIDIA)
+
+Requires [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html) on the host.
+
+```bash
+docker run -d \
+  --name qwenspeak \
+  --restart unless-stopped \
+  --gpus all \
+  -p 2222:22 \
+  -e "LOCKBOX_UID=$(id -u)" \
+  -e "LOCKBOX_GID=$(id -g)" \
+  -e "TTS_DEVICE=cuda" \
+  -v $(pwd)/authorized_keys:/etc/lockbox/authorized_keys:ro \
+  -v $(pwd)/host_keys:/etc/lockbox/host_keys \
+  -v $(pwd)/work:/work \
+  -v $(pwd)/logs:/var/log/tts \
+  -v /path/to/your/models:/models:ro \
+  psyb0t/qwenspeak
+```
+
+With GPU you can use `bfloat16` for ~half the memory and faster inference:
+
+```yaml
+device: cuda
+dtype: bfloat16
+flash_attn: true
+```
+
+The `TTS_DEVICE` env var sets the default device. YAML `device:` field overrides it per-job.
 
 ## Allowed Commands
 
@@ -276,7 +310,7 @@ All of these can be set at any level. Lower levels override higher ones.
 
 | Field                | Default   | Description                                                         |
 | -------------------- | --------- | ------------------------------------------------------------------- |
-| `device`             | `cpu`     | Device: cpu, cuda:0, etc.                                           |
+| `device`             | `TTS_DEVICE` env var or `cpu` | Device: cpu, cuda, cuda:0, etc.                    |
 | `dtype`              | `float32` | Model dtype: float32, float16, bfloat16 (float16/bfloat16 GPU only) |
 | `flash_attn`         | `false`   | Use FlashAttention-2 (GPU only)                                     |
 | `temperature`        | `0.9`     | Sampling temperature                                                |
@@ -345,10 +379,6 @@ Then just: `ssh tts "tts list-speakers"`
 make build
 make test    # build + run integration tests
 ```
-
-## TODO
-
-- [ ] NVIDIA GPU support (CUDA base image, GPU torch wheels, `--gpus` runtime)
 
 ## License
 

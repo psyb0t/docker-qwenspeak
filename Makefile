@@ -3,7 +3,7 @@ IMAGE_NAME := psyb0t/qwenspeak
 TAG := latest
 TEST_TAG := $(TAG)-test
 
-.PHONY: build build-test test installer clean help
+.PHONY: build build-test test test-gpu installer clean help
 
 # Default target
 all: build
@@ -19,6 +19,10 @@ build-test:
 # Run integration tests
 test: build-test
 	./test.sh
+
+# Run integration tests with GPU
+test-gpu: build-test
+	./test.sh --with-gpu
 
 # Generate install.sh from lockbox installer config
 installer:
@@ -36,5 +40,6 @@ help:
 	@echo "  build      - Build the main Docker image"
 	@echo "  build-test - Build the test Docker image with -test suffix"
 	@echo "  test       - Build test image and run integration tests"
+	@echo "  test-gpu   - Build test image and run integration tests with GPU"
 	@echo "  installer  - Generate install.sh from lockbox_installer.yaml"
 	@echo "  clean      - Remove built images"

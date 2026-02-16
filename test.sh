@@ -1,6 +1,13 @@
 #!/bin/bash
 set -e
 
+WITH_GPU=false
+for arg in "$@"; do
+    case "$arg" in
+        --with-gpu) WITH_GPU=true ;;
+    esac
+done
+
 IMAGE="psyb0t/qwenspeak:latest-test"
 CONTAINER="qwenspeak-test-$$"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -36,6 +43,33 @@ pass() {
     TOTAL=$((TOTAL + 1))
 }
 
+exec_cmd() {
+    docker exec "$CONTAINER" bash -c "$1" 2>&1 || true
+}
+
+# run_exec_test <test_name> <docker_exec_command> <grep_pattern> [case_insensitive]
+run_exec_test() {
+    local name="$1"
+    local cmd="$2"
+    local pattern="$3"
+    local case_insensitive="${4:-}"
+
+    local output
+    output=$(exec_cmd "$cmd")
+
+    local grep_flags="-q"
+    if [ "$case_insensitive" = "i" ]; then
+        grep_flags="-qi"
+    fi
+
+    if echo "$output" | grep $grep_flags -- "$pattern"; then
+        pass "$name"
+        return
+    fi
+
+    fail "$name" "$output"
+}
+
 ssh_cmd() {
     ssh -p 22 \
         -i "$KEY" \
@@ -61,7 +95,7 @@ run_test() {
         grep_flags="-qi"
     fi
 
-    if echo "$output" | grep $grep_flags "$pattern"; then
+    if echo "$output" | grep $grep_flags -- "$pattern"; then
         pass "$name"
         return
     fi
@@ -79,10 +113,16 @@ cp "$KEY.pub" "$AUTHKEYS"
 
 echo ""
 echo "=== Starting container ==="
+GPU_ARGS=""
+if [ "$WITH_GPU" = true ]; then
+    GPU_ARGS="--gpus all -e TTS_DEVICE=cuda"
+    echo "(GPU mode enabled)"
+fi
 docker run -d \
     --name "$CONTAINER" \
     -e "LOCKBOX_UID=$(id -u)" \
     -e "LOCKBOX_GID=$(id -g)" \
+    $GPU_ARGS \
     "$IMAGE" >/dev/null
 
 docker cp "$AUTHKEYS" "$CONTAINER:/etc/lockbox/authorized_keys"
@@ -148,6 +188,28 @@ for entry in "${TESTS[@]}"; do
     IFS='|' read -r cmd pattern flags name <<< "$entry"
     run_test "$name" "$cmd" "$pattern" "$flags"
 done
+
+# --- GPU tests (only with --with-gpu) ---
+if [ "$WITH_GPU" = true ]; then
+    echo ""
+    echo "=== Running GPU tests ==="
+
+    GPU_TESTS=(
+        "echo \$TTS_DEVICE|cuda||TTS_DEVICE is set to cuda"
+        "ls /usr/local/cuda/lib64/libcudart*|libcudart||CUDA runtime library exists"
+        "ls /usr/lib/x86_64-linux-gnu/libcudnn*|libcudnn||cuDNN library exists"
+        "python3 -c \"import torch; print(torch.cuda.is_available())\"|True||torch.cuda.is_available() returns True"
+        "python3 -c \"import torch; print(torch.cuda.device_count())\"|[1-9]||torch.cuda.device_count() >= 1"
+    )
+
+    for entry in "${GPU_TESTS[@]}"; do
+        IFS='|' read -r cmd pattern flags name <<< "$entry"
+        run_exec_test "$name" "$cmd" "$pattern" "$flags"
+    done
+else
+    echo ""
+    echo "(Skipping GPU tests - use --with-gpu to enable)"
+fi
 
 echo ""
 echo "================================"
