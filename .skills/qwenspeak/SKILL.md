@@ -23,12 +23,12 @@ export QWENSPEAK_PORT=2222
 
 ## SSH Wrapper
 
-Use `scripts/qwenspeak` instead of raw SSH commands. It handles host, port, and host key acceptance automatically.
+Use `scripts/qwenspeak.sh` instead of raw SSH commands. It handles host, port, and host key acceptance automatically.
 
 ```bash
-scripts/qwenspeak <command> [args]
-scripts/qwenspeak <command> < input_file
-scripts/qwenspeak <command> > output_file
+scripts/qwenspeak.sh <command> [args]
+scripts/qwenspeak.sh <command> < input_file
+scripts/qwenspeak.sh <command> > output_file
 ```
 
 ## TTS Generation
@@ -37,29 +37,29 @@ Jobs run asynchronously. Submit YAML, get a job UUID back immediately, poll for 
 
 ```bash
 # Get the YAML template
-scripts/qwenspeak "tts print-yaml" > job.yaml
+scripts/qwenspeak.sh "tts print-yaml" > job.yaml
 
 # Submit job (returns JSON with job ID immediately)
-scripts/qwenspeak "tts" < job.yaml
+scripts/qwenspeak.sh "tts" < job.yaml
 # {"id": "550e8400-...", "status": "pending", "total_steps": 3, "total_generations": 7}
 
 # Check progress
-scripts/qwenspeak "tts get-job 550e8400"
+scripts/qwenspeak.sh "tts get-job 550e8400"
 
 # View job log
-scripts/qwenspeak "tts get-job-log 550e8400"
+scripts/qwenspeak.sh "tts get-job-log 550e8400"
 
 # Follow job log (like tail -f)
-scripts/qwenspeak "tts get-job-log 550e8400 -f"
+scripts/qwenspeak.sh "tts get-job-log 550e8400 -f"
 
 # List all jobs
-scripts/qwenspeak "tts list-jobs"
+scripts/qwenspeak.sh "tts list-jobs"
 
 # Cancel a running job
-scripts/qwenspeak "tts cancel-job 550e8400"
+scripts/qwenspeak.sh "tts cancel-job 550e8400"
 
 # Download result when done
-scripts/qwenspeak "get hello.wav" > hello.wav
+scripts/qwenspeak.sh "get hello.wav" > hello.wav
 ```
 
 ### YAML Structure
@@ -114,9 +114,9 @@ steps:
 Upload reference files with different emotions and use separate steps:
 
 ```bash
-scripts/qwenspeak "create-dir refs"
-scripts/qwenspeak "put refs/happy.wav" < me_happy.wav
-scripts/qwenspeak "put refs/angry.wav" < me_angry.wav
+scripts/qwenspeak.sh "create-dir refs"
+scripts/qwenspeak.sh "put refs/happy.wav" < me_happy.wav
+scripts/qwenspeak.sh "put refs/angry.wav" < me_angry.wav
 ```
 
 ```yaml
@@ -140,20 +140,20 @@ steps:
 
 ```bash
 # List all jobs (shows id, status, progress, created time)
-scripts/qwenspeak "tts list-jobs"
-scripts/qwenspeak "tts list-jobs --json"
+scripts/qwenspeak.sh "tts list-jobs"
+scripts/qwenspeak.sh "tts list-jobs --json"
 
 # Get full job details as JSON
-scripts/qwenspeak "tts get-job <uuid-or-prefix>"
+scripts/qwenspeak.sh "tts get-job <uuid-or-prefix>"
 
 # View job log
-scripts/qwenspeak "tts get-job-log <uuid-or-prefix>"
+scripts/qwenspeak.sh "tts get-job-log <uuid-or-prefix>"
 
 # Follow job log (like tail -f)
-scripts/qwenspeak "tts get-job-log <uuid-or-prefix> -f"
+scripts/qwenspeak.sh "tts get-job-log <uuid-or-prefix> -f"
 
 # Cancel a running job (kills the worker process immediately)
-scripts/qwenspeak "tts cancel-job <uuid-or-prefix>"
+scripts/qwenspeak.sh "tts cancel-job <uuid-or-prefix>"
 ```
 
 Job statuses: `pending` → `running` → `completed` | `failed` | `cancelled`
@@ -164,15 +164,15 @@ Jobs are ephemeral — cleaned up when completed/failed/cancelled and on contain
 
 ```bash
 # List available speakers
-scripts/qwenspeak "tts list-speakers"
+scripts/qwenspeak.sh "tts list-speakers"
 
 # View logs (includes output from background jobs)
-scripts/qwenspeak "tts log"
-scripts/qwenspeak "tts log -f"
-scripts/qwenspeak "tts log -n 100"
+scripts/qwenspeak.sh "tts log"
+scripts/qwenspeak.sh "tts log -f"
+scripts/qwenspeak.sh "tts log -n 100"
 
 # Tokenize round-trip
-scripts/qwenspeak "tts tokenize input.wav"
+scripts/qwenspeak.sh "tts tokenize input.wav"
 ```
 
 ## File Operations
@@ -181,21 +181,21 @@ All paths relative to `/work`. Traversal blocked.
 
 | Command                | Description                          | Example                                                         |
 | ---------------------- | ------------------------------------ | --------------------------------------------------------------- |
-| `list-files`           | List directory (`--json` for JSON)   | `scripts/qwenspeak "list-files"`                                |
-| `put`                  | Upload file from stdin               | `scripts/qwenspeak "put ref.wav" < ref.wav`                     |
-| `get`                  | Download file to stdout              | `scripts/qwenspeak "get out.wav" > out.wav`                     |
-| `remove-file`          | Delete a file                        | `scripts/qwenspeak "remove-file old.wav"`                       |
-| `create-dir`           | Create directory                     | `scripts/qwenspeak "create-dir refs"`                           |
-| `remove-dir`           | Remove empty directory               | `scripts/qwenspeak "remove-dir refs"`                           |
-| `remove-dir-recursive` | Remove directory recursively         | `scripts/qwenspeak "remove-dir-recursive refs"`                 |
-| `move-file`            | Move or rename a file                | `scripts/qwenspeak "move-file old.wav new.wav"`                 |
-| `copy-file`            | Copy a file                          | `scripts/qwenspeak "copy-file src.wav dst.wav"`                 |
-| `file-info`            | File metadata as JSON                | `scripts/qwenspeak "file-info out.wav"`                         |
-| `file-exists`          | Check if file exists (true/false)    | `scripts/qwenspeak "file-exists out.wav"`                       |
-| `file-hash`            | SHA-256 hash of a file               | `scripts/qwenspeak "file-hash out.wav"`                         |
-| `disk-usage`           | Total bytes used by file/dir         | `scripts/qwenspeak "disk-usage refs"`                           |
-| `search-files`         | Glob search (`**` recursive)         | `scripts/qwenspeak "search-files **/*.wav"`                     |
-| `append-file`          | Append stdin to existing file        | `scripts/qwenspeak "append-file log.txt" < extra.txt`           |
+| `list-files`           | List directory (`--json` for JSON)   | `scripts/qwenspeak.sh "list-files"`                                |
+| `put`                  | Upload file from stdin               | `scripts/qwenspeak.sh "put ref.wav" < ref.wav`                     |
+| `get`                  | Download file to stdout              | `scripts/qwenspeak.sh "get out.wav" > out.wav`                     |
+| `remove-file`          | Delete a file                        | `scripts/qwenspeak.sh "remove-file old.wav"`                       |
+| `create-dir`           | Create directory                     | `scripts/qwenspeak.sh "create-dir refs"`                           |
+| `remove-dir`           | Remove empty directory               | `scripts/qwenspeak.sh "remove-dir refs"`                           |
+| `remove-dir-recursive` | Remove directory recursively         | `scripts/qwenspeak.sh "remove-dir-recursive refs"`                 |
+| `move-file`            | Move or rename a file                | `scripts/qwenspeak.sh "move-file old.wav new.wav"`                 |
+| `copy-file`            | Copy a file                          | `scripts/qwenspeak.sh "copy-file src.wav dst.wav"`                 |
+| `file-info`            | File metadata as JSON                | `scripts/qwenspeak.sh "file-info out.wav"`                         |
+| `file-exists`          | Check if file exists (true/false)    | `scripts/qwenspeak.sh "file-exists out.wav"`                       |
+| `file-hash`            | SHA-256 hash of a file               | `scripts/qwenspeak.sh "file-hash out.wav"`                         |
+| `disk-usage`           | Total bytes used by file/dir         | `scripts/qwenspeak.sh "disk-usage refs"`                           |
+| `search-files`         | Glob search (`**` recursive)         | `scripts/qwenspeak.sh "search-files **/*.wav"`                     |
+| `append-file`          | Append stdin to existing file        | `scripts/qwenspeak.sh "append-file log.txt" < extra.txt`           |
 
 ## Available Speakers
 
