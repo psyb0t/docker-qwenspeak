@@ -3,6 +3,7 @@ name: qwenspeak
 description: Text-to-speech generation via Qwen3-TTS over SSH. Preset voices, voice cloning, voice design. Use when the user wants to generate speech audio, clone voices, or work with TTS.
 compatibility: Requires ssh and a running qwenspeak instance. QWENSPEAK_HOST and QWENSPEAK_PORT env vars must be set.
 metadata:
+  version: 1.2.0
   author: psyb0t
   homepage: https://github.com/psyb0t/docker-qwenspeak
 ---
@@ -151,7 +152,7 @@ scripts/qwenspeak "tts get-job-log <uuid-or-prefix>"
 # Follow job log (like tail -f)
 scripts/qwenspeak "tts get-job-log <uuid-or-prefix> -f"
 
-# Cancel a running job (takes effect between generations)
+# Cancel a running job (kills the worker process immediately)
 scripts/qwenspeak "tts cancel-job <uuid-or-prefix>"
 ```
 
