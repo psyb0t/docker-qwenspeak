@@ -105,7 +105,6 @@ ssh -p $QWENSPEAK_PORT tts@$QWENSPEAK_HOST "get hello.wav" > hello.wav
 Each config has global settings and a list of steps. Each step loads a model, runs all its generations, then unloads it. Settings cascade: global → step → generation.
 
 ```yaml
-device: cpu
 dtype: float32
 models_dir: /models
 temperature: 0.9
@@ -227,7 +226,6 @@ All of these can be set at global, step, or generation level. Lower levels overr
 
 | Field                | Default   | Description                                                  |
 | -------------------- | --------- | ------------------------------------------------------------ |
-| `device`             | `cpu`     | Device: cpu, cuda:0, etc.                                    |
 | `dtype`              | `float32` | Model dtype: float32, float16, bfloat16 (float16/bfloat16 GPU only) |
 | `flash_attn`         | `false`   | Use FlashAttention-2 (GPU only)                              |
 | `temperature`        | `0.9`     | Sampling temperature                                         |

@@ -86,8 +86,9 @@ GENERATION_DEFAULTS = {
     "no_sample": False,
 }
 
+DEVICE = os.environ.get("TTS_DEVICE", "cpu")
+
 GLOBAL_DEFAULTS = {
-    "device": os.environ.get("TTS_DEVICE", "cpu"),
     "dtype": "float32",
     "models_dir": DEFAULT_MODELS_DIR,
     "flash_attn": False,
@@ -111,7 +112,6 @@ YAML_TEMPLATE = """\
 # Pipe this to tts via stdin: ssh tts@host "tts" < job.yaml
 
 # Global settings (apply to all steps unless overridden)
-device: cpu                # cpu, cuda, cuda:0, etc. (default: TTS_DEVICE env var)
 dtype: float32             # float32, float16, bfloat16 (float16/bfloat16 GPU only)
 models_dir: /models
 flash_attn: false          # FlashAttention-2 (GPU only)
@@ -488,7 +488,7 @@ def run_step(step: dict, globals_cfg: dict) -> None:
 
     # Resolve model
     model_size = merge_config(globals_cfg, step_cfg).get("model_size", "1.7b")
-    device = merge_config(globals_cfg, step_cfg).get("device", "cpu")
+    device = DEVICE
     dtype = merge_config(globals_cfg, step_cfg).get("dtype", "float32")
     flash_attn = merge_config(globals_cfg, step_cfg).get("flash_attn", False)
     models_dir = merge_config(globals_cfg, step_cfg).get("models_dir", DEFAULT_MODELS_DIR)
@@ -576,7 +576,7 @@ def cmd_tokenize(args: argparse.Namespace) -> None:
     try:
         tok_path = resolve_tokenizer_path(args.models_dir, args.tokenizer)
         print(f"Loading tokenizer: {tok_path} ...")
-        tokenizer = Qwen3TTSTokenizer.from_pretrained(tok_path, device_map=args.device)
+        tokenizer = Qwen3TTSTokenizer.from_pretrained(tok_path, device_map=DEVICE)
         print("Tokenizer loaded.")
 
         print(f"Encoding: {args.audio} ...")
@@ -670,7 +670,6 @@ def build_parser() -> argparse.ArgumentParser:
     p_tok = sub.add_parser("tokenize", help="Encode audio to speech tokens and decode back")
     p_tok.add_argument("audio", help="Input audio file path")
     p_tok.add_argument("--output", "-o", default="output.wav", help="Output file path (default: output.wav)")
-    p_tok.add_argument("--device", default="cpu", help="Device (default: cpu)")
     p_tok.add_argument("--tokenizer", default="12hz", choices=["12hz"], help="Tokenizer variant (default: 12hz)")
     p_tok.set_defaults(func=cmd_tokenize)
 

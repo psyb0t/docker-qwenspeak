@@ -2,7 +2,6 @@
 # Pipe this to tts via stdin: ssh tts@host "tts" < generation.example.yaml
 
 # Global settings (apply to all steps unless overridden)
-device: cpu                # cpu, cuda, cuda:0, etc. (default: TTS_DEVICE env var)
 dtype: float32             # float32, float16, bfloat16 (float16/bfloat16 GPU only)
 models_dir: /models
 flash_attn: false          # FlashAttention-2 (GPU only)

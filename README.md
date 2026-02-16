@@ -139,7 +139,7 @@ dtype: bfloat16
 flash_attn: true
 ```
 
-The `TTS_DEVICE` env var sets the default device. YAML `device:` field overrides it per-job.
+Device is controlled by the `TTS_DEVICE` env var (not in YAML).
 
 ## Allowed Commands
 
@@ -171,7 +171,6 @@ Each config has global settings and a list of steps. Each step loads a model, ru
 
 ```yaml
 # Global settings
-device: cpu
 dtype: float32
 models_dir: /models
 flash_attn: false
@@ -310,7 +309,6 @@ All of these can be set at any level. Lower levels override higher ones.
 
 | Field                | Default   | Description                                                         |
 | -------------------- | --------- | ------------------------------------------------------------------- |
-| `device`             | `TTS_DEVICE` env var or `cpu` | Device: cpu, cuda, cuda:0, etc.                    |
 | `dtype`              | `float32` | Model dtype: float32, float16, bfloat16 (float16/bfloat16 GPU only) |
 | `flash_attn`         | `false`   | Use FlashAttention-2 (GPU only)                                     |
 | `temperature`        | `0.9`     | Sampling temperature                                                |
