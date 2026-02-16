@@ -175,7 +175,6 @@ case "${1:-}" in
             compose down
         fi
 
-        docker pull psyb0t/qwenspeak
         sudo -v
         echo "Updating qwenspeak..."
         curl -fsSL https://raw.githubusercontent.com/psyb0t/docker-qwenspeak/main/install.sh | sudo bash
