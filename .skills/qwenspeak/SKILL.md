@@ -3,7 +3,6 @@ name: qwenspeak
 description: Text-to-speech generation via Qwen3-TTS over SSH. Preset voices, voice cloning, voice design. Use when the user wants to generate speech audio, clone voices, or work with TTS.
 compatibility: Requires ssh and a running qwenspeak instance. QWENSPEAK_HOST and QWENSPEAK_PORT env vars must be set.
 metadata:
-  version: 1.4.0
   author: psyb0t
   homepage: https://github.com/psyb0t/docker-qwenspeak
 ---
@@ -179,60 +178,60 @@ scripts/qwenspeak.sh "tts tokenize input.wav"
 
 All paths are relative to the work directory. Traversal blocked.
 
-| Command                | Description                          | Example                                                         |
-| ---------------------- | ------------------------------------ | --------------------------------------------------------------- |
-| `list-files`           | List directory (`--json` for JSON)   | `scripts/qwenspeak.sh "list-files"`                                |
-| `put`                  | Upload file from stdin               | `scripts/qwenspeak.sh "put ref.wav" < ref.wav`                     |
-| `get`                  | Download file to stdout              | `scripts/qwenspeak.sh "get out.wav" > out.wav`                     |
-| `remove-file`          | Delete a file                        | `scripts/qwenspeak.sh "remove-file old.wav"`                       |
-| `create-dir`           | Create directory                     | `scripts/qwenspeak.sh "create-dir refs"`                           |
-| `remove-dir`           | Remove empty directory               | `scripts/qwenspeak.sh "remove-dir refs"`                           |
-| `remove-dir-recursive` | Remove directory recursively         | `scripts/qwenspeak.sh "remove-dir-recursive refs"`                 |
-| `move-file`            | Move or rename a file                | `scripts/qwenspeak.sh "move-file old.wav new.wav"`                 |
-| `copy-file`            | Copy a file                          | `scripts/qwenspeak.sh "copy-file src.wav dst.wav"`                 |
-| `file-info`            | File metadata as JSON                | `scripts/qwenspeak.sh "file-info out.wav"`                         |
-| `file-exists`          | Check if file exists (true/false)    | `scripts/qwenspeak.sh "file-exists out.wav"`                       |
-| `file-hash`            | SHA-256 hash of a file               | `scripts/qwenspeak.sh "file-hash out.wav"`                         |
-| `disk-usage`           | Total bytes used by file/dir         | `scripts/qwenspeak.sh "disk-usage refs"`                           |
-| `search-files`         | Glob search (`**` recursive)         | `scripts/qwenspeak.sh "search-files **/*.wav"`                     |
-| `append-file`          | Append stdin to existing file        | `scripts/qwenspeak.sh "append-file log.txt" < extra.txt`           |
+| Command                | Description                        | Example                                                  |
+| ---------------------- | ---------------------------------- | -------------------------------------------------------- |
+| `list-files`           | List directory (`--json` for JSON) | `scripts/qwenspeak.sh "list-files"`                      |
+| `put`                  | Upload file from stdin             | `scripts/qwenspeak.sh "put ref.wav" < ref.wav`           |
+| `get`                  | Download file to stdout            | `scripts/qwenspeak.sh "get out.wav" > out.wav`           |
+| `remove-file`          | Delete a file                      | `scripts/qwenspeak.sh "remove-file old.wav"`             |
+| `create-dir`           | Create directory                   | `scripts/qwenspeak.sh "create-dir refs"`                 |
+| `remove-dir`           | Remove empty directory             | `scripts/qwenspeak.sh "remove-dir refs"`                 |
+| `remove-dir-recursive` | Remove directory recursively       | `scripts/qwenspeak.sh "remove-dir-recursive refs"`       |
+| `move-file`            | Move or rename a file              | `scripts/qwenspeak.sh "move-file old.wav new.wav"`       |
+| `copy-file`            | Copy a file                        | `scripts/qwenspeak.sh "copy-file src.wav dst.wav"`       |
+| `file-info`            | File metadata as JSON              | `scripts/qwenspeak.sh "file-info out.wav"`               |
+| `file-exists`          | Check if file exists (true/false)  | `scripts/qwenspeak.sh "file-exists out.wav"`             |
+| `file-hash`            | SHA-256 hash of a file             | `scripts/qwenspeak.sh "file-hash out.wav"`               |
+| `disk-usage`           | Total bytes used by file/dir       | `scripts/qwenspeak.sh "disk-usage refs"`                 |
+| `search-files`         | Glob search (`**` recursive)       | `scripts/qwenspeak.sh "search-files **/*.wav"`           |
+| `append-file`          | Append stdin to existing file      | `scripts/qwenspeak.sh "append-file log.txt" < extra.txt` |
 
 ## Available Speakers
 
-| Speaker   | Gender | Language | Description                                     |
-| --------- | ------ | -------- | ----------------------------------------------- |
-| Vivian    | Female | Chinese  | Bright, slightly edgy young voice               |
-| Serena    | Female | Chinese  | Warm, gentle young voice                        |
-| Uncle_Fu  | Male   | Chinese  | Seasoned, low mellow timbre                     |
-| Dylan     | Male   | Chinese  | Youthful Beijing dialect, clear natural timbre   |
-| Eric      | Male   | Chinese  | Lively Chengdu/Sichuan dialect, slightly husky  |
-| Ryan      | Male   | English  | Dynamic with strong rhythmic drive              |
-| Aiden     | Male   | English  | Sunny American, clear midrange                  |
-| Ono_Anna  | Female | Japanese | Playful, light nimble timbre                    |
-| Sohee     | Female | Korean   | Warm with rich emotion                          |
+| Speaker  | Gender | Language | Description                                    |
+| -------- | ------ | -------- | ---------------------------------------------- |
+| Vivian   | Female | Chinese  | Bright, slightly edgy young voice              |
+| Serena   | Female | Chinese  | Warm, gentle young voice                       |
+| Uncle_Fu | Male   | Chinese  | Seasoned, low mellow timbre                    |
+| Dylan    | Male   | Chinese  | Youthful Beijing dialect, clear natural timbre |
+| Eric     | Male   | Chinese  | Lively Chengdu/Sichuan dialect, slightly husky |
+| Ryan     | Male   | English  | Dynamic with strong rhythmic drive             |
+| Aiden    | Male   | English  | Sunny American, clear midrange                 |
+| Ono_Anna | Female | Japanese | Playful, light nimble timbre                   |
+| Sohee    | Female | Korean   | Warm with rich emotion                         |
 
 ## YAML Options
 
 All settings can be set at global, step, or generation level. Lower levels override higher ones. Device is controlled by the `PROCESSING_UNIT` env var on the container, not in YAML.
 
-| Field                | Default   | Description                                                  |
-| -------------------- | --------- | ------------------------------------------------------------ |
+| Field                | Default   | Description                                                         |
+| -------------------- | --------- | ------------------------------------------------------------------- |
 | `dtype`              | `float32` | Model dtype: float32, float16, bfloat16 (float16/bfloat16 GPU only) |
-| `flash_attn`         | `auto`    | FlashAttention-2: auto-detects, auto-switches float32→bfloat16 |
-| `temperature`        | `0.9`     | Sampling temperature                                         |
-| `top_k`              | `50`      | Top-k sampling                                               |
-| `top_p`              | `1.0`     | Top-p / nucleus sampling                                     |
-| `repetition_penalty` | `1.05`    | Repetition penalty                                           |
-| `max_new_tokens`     | `2048`    | Max codec tokens to generate                                 |
-| `no_sample`          | `false`   | Greedy decoding                                              |
-| `streaming`          | `false`   | Streaming mode (lower latency)                               |
-| `mode`               | required  | Step only: `custom-voice`, `voice-design`, or `voice-clone`  |
-| `model_size`         | `1.7b`    | Step only: `1.7b` or `0.6b`                                 |
-| `text`               | required  | Text to synthesize                                           |
-| `output`             | required  | Output file path                                             |
-| `speaker`            | `Vivian`  | custom-voice: speaker name                                   |
-| `language`           | `Auto`    | Language for synthesis                                       |
-| `instruct`           | -         | custom-voice: emotion/style; voice-design: voice description |
-| `ref_audio`          | -         | voice-clone: reference audio file path                       |
-| `ref_text`           | -         | voice-clone: transcript of reference audio                   |
-| `x_vector_only`      | `false`   | voice-clone: use speaker embedding only                      |
+| `flash_attn`         | `auto`    | FlashAttention-2: auto-detects, auto-switches float32→bfloat16      |
+| `temperature`        | `0.9`     | Sampling temperature                                                |
+| `top_k`              | `50`      | Top-k sampling                                                      |
+| `top_p`              | `1.0`     | Top-p / nucleus sampling                                            |
+| `repetition_penalty` | `1.05`    | Repetition penalty                                                  |
+| `max_new_tokens`     | `2048`    | Max codec tokens to generate                                        |
+| `no_sample`          | `false`   | Greedy decoding                                                     |
+| `streaming`          | `false`   | Streaming mode (lower latency)                                      |
+| `mode`               | required  | Step only: `custom-voice`, `voice-design`, or `voice-clone`         |
+| `model_size`         | `1.7b`    | Step only: `1.7b` or `0.6b`                                         |
+| `text`               | required  | Text to synthesize                                                  |
+| `output`             | required  | Output file path                                                    |
+| `speaker`            | `Vivian`  | custom-voice: speaker name                                          |
+| `language`           | `Auto`    | Language for synthesis                                              |
+| `instruct`           | -         | custom-voice: emotion/style; voice-design: voice description        |
+| `ref_audio`          | -         | voice-clone: reference audio file path                              |
+| `ref_text`           | -         | voice-clone: transcript of reference audio                          |
+| `x_vector_only`      | `false`   | voice-clone: use speaker embedding only                             |
