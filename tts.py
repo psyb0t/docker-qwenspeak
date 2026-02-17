@@ -33,6 +33,8 @@ Examples:
   ssh tts@host "tts log -f"
 """
 
+from __future__ import annotations
+
 import argparse
 import gc
 import json
@@ -44,12 +46,17 @@ import time
 import uuid
 from datetime import datetime
 from pathlib import Path
+from typing import TYPE_CHECKING
 
+# torch and qwen_tts are imported lazily to avoid CUDA initialization before fork.
+# flash-attn initializes CUDA on import, which breaks os.fork() in the daemon path.
 import numpy as np
 import soundfile
-import torch
 import yaml
-from qwen_tts import Qwen3TTSModel, Qwen3TTSTokenizer
+
+if TYPE_CHECKING:
+    import torch
+    from qwen_tts import Qwen3TTSModel
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -326,6 +333,8 @@ def die(msg: str) -> None:
 
 
 def resolve_dtype(name: str) -> torch.dtype:
+    import torch
+
     mapping = {
         "float16": torch.float16,
         "fp16": torch.float16,
@@ -358,6 +367,8 @@ def resolve_tokenizer_path(models_dir: str, variant: str) -> str:
 def load_model(
     model_path: str, device: str, dtype: torch.dtype, flash_attn: bool
 ) -> Qwen3TTSModel:
+    from qwen_tts import Qwen3TTSModel
+
     kwargs = {"device_map": device, "dtype": dtype}
     if flash_attn:
         kwargs["attn_implementation"] = "flash_attention_2"
@@ -368,6 +379,8 @@ def load_model(
 
 
 def unload_model(model: Qwen3TTSModel) -> None:
+    import torch
+
     del model
     gc.collect()
     if torch.cuda.is_available():
@@ -893,6 +906,8 @@ def cmd_get_job_log(args: argparse.Namespace) -> None:
 
 
 def cmd_tokenize(args: argparse.Namespace) -> None:
+    from qwen_tts import Qwen3TTSTokenizer
+
     log_mgr = setup_logging()
     try:
         tok_path = resolve_tokenizer_path(args.models_dir, args.tokenizer)
