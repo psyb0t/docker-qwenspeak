@@ -9,20 +9,13 @@ metadata:
 
 # qwenspeak
 
-YAML-driven text-to-speech over SSH using Qwen3-TTS models. All commands go through a locked-down container with command whitelisting and path sandboxing.
+YAML-driven text-to-speech over SSH using Qwen3-TTS models.
 
-## Setup
-
-Set these environment variables:
-
-```bash
-export QWENSPEAK_HOST=localhost
-export QWENSPEAK_PORT=2222
-```
+For installation and deployment, see [references/setup.md](references/setup.md).
 
 ## SSH Wrapper
 
-Use `scripts/qwenspeak.sh` instead of raw SSH commands. It handles host, port, and host key acceptance automatically.
+Use `scripts/qwenspeak.sh` for all commands. It handles host, port, and host key acceptance via `QWENSPEAK_HOST` and `QWENSPEAK_PORT` env vars.
 
 ```bash
 scripts/qwenspeak.sh <command> [args]
@@ -32,44 +25,31 @@ scripts/qwenspeak.sh <command> > output_file
 
 ## TTS Generation
 
-Jobs run asynchronously with a sequential queue. Submit YAML, get a job UUID back immediately, poll for progress. Only one pipeline runs at a time — additional submissions queue up (max 50 by default, `TTS_MAX_QUEUE` env var).
+Submit YAML, get a job UUID back immediately, poll for progress. Jobs run sequentially — one at a time, the rest queue up.
 
 ```bash
 # Get the YAML template
 scripts/qwenspeak.sh "tts print-yaml" > job.yaml
 
-# Submit job (returns JSON with job ID immediately)
+# Submit job
 scripts/qwenspeak.sh "tts" < job.yaml
 # {"id": "550e8400-...", "status": "queued", "total_steps": 3, "total_generations": 7}
 
 # Check progress
 scripts/qwenspeak.sh "tts get-job 550e8400"
 
-# View job log
-scripts/qwenspeak.sh "tts get-job-log 550e8400"
-
-# Follow job log (like tail -f)
+# Follow job log
 scripts/qwenspeak.sh "tts get-job-log 550e8400 -f"
 
-# List all jobs
-scripts/qwenspeak.sh "tts list-jobs"
-
-# Cancel a running job
-scripts/qwenspeak.sh "tts cancel-job 550e8400"
-
-# Download result when done
+# Download result
 scripts/qwenspeak.sh "get hello.wav" > hello.wav
 ```
 
-### YAML Structure
+## YAML Structure
 
-Each config has global settings and a list of steps. Each step loads a model, runs all its generations, then unloads it. Settings cascade: global > step > generation.
+Global settings + list of steps. Each step loads a model, runs all its generations, then unloads. Settings cascade: global > step > generation.
 
 ```yaml
-dtype: float32
-models_dir: /models
-temperature: 0.9
-
 steps:
   - mode: custom-voice
     model_size: 1.7b
@@ -100,17 +80,17 @@ steps:
         output: clone2.wav
 ```
 
-### Modes
+## Modes
 
-**custom-voice** - Pick from 9 preset speakers. The 1.7B model supports emotion/style via `instruct`.
+**custom-voice** — Pick from 9 preset speakers. 1.7B supports emotion/style via `instruct`.
 
-**voice-design** - Describe the voice in natural language via `instruct`. Only available as 1.7B.
+**voice-design** — Describe the voice in natural language via `instruct`. 1.7B only.
 
-**voice-clone** - Clone a voice from reference audio. Set `ref_audio` and `ref_text` at the step level to reuse the voice prompt across generations. Use `x_vector_only: true` to skip the transcript.
+**voice-clone** — Clone from reference audio. Set `ref_audio` and `ref_text` at step level to reuse across generations. `x_vector_only: true` skips transcript.
 
 ### Emotion trick for cloned voices
 
-Upload reference files with different emotions and use separate steps:
+Upload references with different emotions, use separate steps:
 
 ```bash
 scripts/qwenspeak.sh "create-dir refs"
@@ -138,65 +118,36 @@ steps:
 ## Job Management
 
 ```bash
-# List all jobs (shows id, status, progress, created time)
-scripts/qwenspeak.sh "tts list-jobs"
-scripts/qwenspeak.sh "tts list-jobs --json"
-
-# Get full job details as JSON
-scripts/qwenspeak.sh "tts get-job <uuid-or-prefix>"
-
-# View job log
-scripts/qwenspeak.sh "tts get-job-log <uuid-or-prefix>"
-
-# Follow job log (like tail -f)
-scripts/qwenspeak.sh "tts get-job-log <uuid-or-prefix> -f"
-
-# Cancel a running or queued job
-scripts/qwenspeak.sh "tts cancel-job <uuid-or-prefix>"
+scripts/qwenspeak.sh "tts list-jobs"              # list all
+scripts/qwenspeak.sh "tts list-jobs --json"        # JSON output
+scripts/qwenspeak.sh "tts get-job <id>"            # job details
+scripts/qwenspeak.sh "tts get-job-log <id>"        # view log
+scripts/qwenspeak.sh "tts get-job-log <id> -f"     # follow log
+scripts/qwenspeak.sh "tts cancel-job <id>"         # cancel
 ```
 
-Job statuses: `queued` → `running` → `completed` | `failed` | `cancelled`
+Statuses: `queued` → `running` → `completed` | `failed` | `cancelled`
 
-Jobs are retained after completion. Completed jobs auto-cleaned after 1 day, all jobs after 1 week.
-
-## Other Commands
-
-```bash
-# List available speakers
-scripts/qwenspeak.sh "tts list-speakers"
-
-# View logs (includes output from background jobs)
-scripts/qwenspeak.sh "tts log"
-scripts/qwenspeak.sh "tts log -f"
-scripts/qwenspeak.sh "tts log -n 100"
-
-# Tokenize round-trip
-scripts/qwenspeak.sh "tts tokenize input.wav"
-```
+Completed jobs auto-cleaned after 1 day, all jobs after 1 week. UUID prefixes work (e.g. first 8 chars).
 
 ## File Operations
 
-All paths are relative to the work directory. Traversal blocked.
+All paths relative to the work directory. Traversal blocked.
 
-| Command                | Description                        | Example                                                  |
-| ---------------------- | ---------------------------------- | -------------------------------------------------------- |
-| `list-files`           | List directory (`--json` for JSON) | `scripts/qwenspeak.sh "list-files"`                      |
-| `put`                  | Upload file from stdin             | `scripts/qwenspeak.sh "put ref.wav" < ref.wav`           |
-| `get`                  | Download file to stdout            | `scripts/qwenspeak.sh "get out.wav" > out.wav`           |
-| `remove-file`          | Delete a file                      | `scripts/qwenspeak.sh "remove-file old.wav"`             |
-| `create-dir`           | Create directory                   | `scripts/qwenspeak.sh "create-dir refs"`                 |
-| `remove-dir`           | Remove empty directory             | `scripts/qwenspeak.sh "remove-dir refs"`                 |
-| `remove-dir-recursive` | Remove directory recursively       | `scripts/qwenspeak.sh "remove-dir-recursive refs"`       |
-| `move-file`            | Move or rename a file              | `scripts/qwenspeak.sh "move-file old.wav new.wav"`       |
-| `copy-file`            | Copy a file                        | `scripts/qwenspeak.sh "copy-file src.wav dst.wav"`       |
-| `file-info`            | File metadata as JSON              | `scripts/qwenspeak.sh "file-info out.wav"`               |
-| `file-exists`          | Check if file exists (true/false)  | `scripts/qwenspeak.sh "file-exists out.wav"`             |
-| `file-hash`            | SHA-256 hash of a file             | `scripts/qwenspeak.sh "file-hash out.wav"`               |
-| `disk-usage`           | Total bytes used by file/dir       | `scripts/qwenspeak.sh "disk-usage refs"`                 |
-| `search-files`         | Glob search (`**` recursive)       | `scripts/qwenspeak.sh "search-files **/*.wav"`           |
-| `append-file`          | Append stdin to existing file      | `scripts/qwenspeak.sh "append-file log.txt" < extra.txt` |
+| Command                | Description                        |
+| ---------------------- | ---------------------------------- |
+| `put <path>`           | Upload file from stdin             |
+| `get <path>`           | Download file to stdout            |
+| `list-files [--json]`  | List directory                     |
+| `remove-file <path>`   | Delete a file                      |
+| `create-dir <path>`    | Create directory                   |
+| `remove-dir <path>`    | Remove empty directory             |
+| `move-file <src> <dst>`| Move or rename                     |
+| `copy-file <src> <dst>`| Copy a file                        |
+| `file-exists <path>`   | Check if file exists (true/false)  |
+| `search-files <glob>`  | Glob search (`**` recursive)       |
 
-## Available Speakers
+## Speakers
 
 | Speaker  | Gender | Language | Description                                    |
 | -------- | ------ | -------- | ---------------------------------------------- |
@@ -212,12 +163,12 @@ All paths are relative to the work directory. Traversal blocked.
 
 ## YAML Options
 
-All settings can be set at global, step, or generation level. Lower levels override higher ones. Device is controlled by the `PROCESSING_UNIT` env var on the container, not in YAML.
+All settings cascade: global > step > generation.
 
 | Field                | Default   | Description                                                         |
 | -------------------- | --------- | ------------------------------------------------------------------- |
-| `dtype`              | `float32` | Model dtype: float32, float16, bfloat16 (float16/bfloat16 GPU only) |
-| `flash_attn`         | `auto`    | FlashAttention-2: auto-detects, auto-switches float32→bfloat16      |
+| `dtype`              | `float32` | float32, float16, bfloat16 (float16/bfloat16 GPU only)             |
+| `flash_attn`         | `auto`    | FlashAttention-2: auto-detects, auto-switches float32→bfloat16     |
 | `temperature`        | `0.9`     | Sampling temperature                                                |
 | `top_k`              | `50`      | Top-k sampling                                                      |
 | `top_p`              | `1.0`     | Top-p / nucleus sampling                                            |
@@ -226,11 +177,11 @@ All settings can be set at global, step, or generation level. Lower levels overr
 | `no_sample`          | `false`   | Greedy decoding                                                     |
 | `streaming`          | `false`   | Streaming mode (lower latency)                                      |
 | `mode`               | required  | Step only: `custom-voice`, `voice-design`, or `voice-clone`         |
-| `model_size`         | `1.7b`    | Step only: `1.7b` or `0.6b`                                         |
+| `model_size`         | `1.7b`    | Step only: `1.7b` or `0.6b`                                        |
 | `text`               | required  | Text to synthesize                                                  |
 | `output`             | required  | Output file path                                                    |
 | `speaker`            | `Vivian`  | custom-voice: speaker name                                          |
-| `language`           | `Auto`    | Language for synthesis                                              |
+| `language`           | `Auto`    | Language for synthesis                                               |
 | `instruct`           | -         | custom-voice: emotion/style; voice-design: voice description        |
 | `ref_audio`          | -         | voice-clone: reference audio file path                              |
 | `ref_text`           | -         | voice-clone: transcript of reference audio                          |
