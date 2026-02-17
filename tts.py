@@ -834,7 +834,7 @@ def cmd_list_jobs(args: argparse.Namespace) -> None:
 def cmd_get_job(args: argparse.Namespace) -> None:
     job = load_job(args.id)
     # Check if running worker is actually alive
-    if job.get("status") in ("running", "cancelling"):
+    if job.get("status") == "running":
         pid = job.get("pid")
         if pid and not _pid_alive(pid):
             job["status"] = "dead"
