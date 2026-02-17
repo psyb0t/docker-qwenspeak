@@ -85,6 +85,7 @@ EOF
 
 cat > "$INSTALL_PATH" << 'SCRIPT'
 #!/bin/bash
+{
 
 QWENSPEAK_HOME="__QWENSPEAK_HOME__"
 ENV_FILE="$QWENSPEAK_HOME/.env"
@@ -258,6 +259,9 @@ case "${1:-}" in
         usage
         ;;
 esac
+
+exit
+}
 SCRIPT
 
 sed -i "s|__QWENSPEAK_HOME__|$QWENSPEAK_HOME|g" "$INSTALL_PATH"
