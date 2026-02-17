@@ -1,6 +1,6 @@
 FROM nvidia/cuda:12.6.3-cudnn-runtime-ubuntu24.04 AS cuda-runtime
 
-FROM psyb0t/lockbox
+FROM psyb0t/lockbox:v2.1.1
 
 ENV LOCKBOX_USER=tts
 ENV TTS_LOG_RETENTION=7d
