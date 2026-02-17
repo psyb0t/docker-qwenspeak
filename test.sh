@@ -174,7 +174,7 @@ TESTS=(
     # log
     "tts log --help|follow||log help shows --follow"
     "tts log --help|-n||log help shows -n"
-    "tts log|No logs yet||log shows no logs message"
+    # tts log exits silently when no logs (tested via exec below)
 
     # tokenize help
     "tts tokenize --help|audio||tokenize shows audio arg"
@@ -202,6 +202,15 @@ for entry in "${TESTS[@]}"; do
     IFS='|' read -r cmd pattern flags name <<< "$entry"
     run_test "$name" "$cmd" "$pattern" "$flags"
 done
+
+# --- Special tests ---
+# tts log should exit silently (no output) when no logs exist
+LOG_OUTPUT=$(ssh_cmd "tts log" 2>&1)
+if [ -z "$LOG_OUTPUT" ]; then
+    pass "tts log exits silently with no logs"
+else
+    fail "tts log exits silently with no logs" "$LOG_OUTPUT"
+fi
 
 # --- GPU tests (only with --with-gpu) ---
 if [ "$WITH_GPU" = true ]; then

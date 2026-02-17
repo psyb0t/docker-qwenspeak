@@ -69,12 +69,12 @@ qwenspeak start -d -m /path/to/your/models
 
 ```bash
 qwenspeak start -d                        # foreground or detached
-qwenspeak start -d -p 2223                # custom port (default 2222)
+qwenspeak start -d --port 2223             # custom port (default 2222)
 qwenspeak start -d -m /mnt/hdd/models     # custom models directory
 qwenspeak start -d --processing-unit cuda                # GPU mode (requires NVIDIA Container Toolkit)
 qwenspeak start -d --processing-unit cuda --gpus 0       # use only GPU 0
 qwenspeak start -d --processing-unit cuda --gpus 0,1     # use GPUs 0 and 1
-qwenspeak start -d -r 4g -s 2g -c 4       # 4GB RAM, 2GB swap, 4 CPUs
+qwenspeak start -d --memory 4g --swap 2g --cpus 4  # 4GB RAM, 2GB swap, 4 CPUs
 qwenspeak stop                             # stop
 qwenspeak upgrade                          # pull latest image, asks to stop/restart if running
 qwenspeak uninstall                        # stop and remove everything
@@ -131,12 +131,7 @@ docker run -d \
   psyb0t/qwenspeak
 ```
 
-With GPU you can use `bfloat16` for ~half the memory and faster inference:
-
-```yaml
-dtype: bfloat16
-flash_attn: true
-```
+FlashAttention-2 is included and auto-enables on GPU. It requires fp16/bf16 — if your dtype is float32, it auto-switches to bfloat16.
 
 Device is controlled by the `PROCESSING_UNIT` env var (not in YAML). Set via `--processing-unit cuda` on the installer or `-e PROCESSING_UNIT=cuda` on docker run.
 
@@ -148,7 +143,7 @@ Device is controlled by the `PROCESSING_UNIT` env var (not in YAML). Set via `--
 
 ## How It Works
 
-All generation is driven by YAML configs piped via stdin. Jobs run asynchronously — submit a config, get a job UUID back immediately, poll for progress, download results when done.
+All generation is driven by YAML configs piped via stdin. Jobs run asynchronously — submit a config, get a job UUID back immediately, poll for progress, download results when done. Jobs execute sequentially (one pipeline at a time), new submissions queue up automatically. Max queue size is 50 by default (`TTS_MAX_QUEUE` env var).
 
 ```bash
 # Get the YAML template
@@ -159,7 +154,7 @@ vim job.yaml
 
 # Submit (returns immediately with job ID)
 ssh tts@host "tts" < job.yaml
-# {"id": "550e8400-...", "status": "pending", "total_steps": 3, "total_generations": 7}
+# {"id": "550e8400-...", "status": "queued", "total_steps": 3, "total_generations": 7}
 
 # Check progress
 ssh tts@host "tts get-job 550e8400"
@@ -188,7 +183,7 @@ Each config has global settings and a list of steps. Each step loads a model, ru
 # Global settings
 dtype: float32
 models_dir: /models
-flash_attn: false
+flash_attn: auto           # auto-detects; set true/false to override
 
 # Generation defaults
 temperature: 0.9
@@ -220,7 +215,7 @@ steps:
 
   - mode: voice-clone
     model_size: 1.7b
-    ref_audio: /work/ref.wav
+    ref_audio: ref.wav
     ref_text: "Transcript of reference"
     generate:
       - text: "First line in cloned voice"
@@ -252,7 +247,7 @@ ssh tts@host "put refs/angry.wav" < me_angry.wav
 ```yaml
 steps:
   - mode: voice-clone
-    ref_audio: /work/refs/happy.wav
+    ref_audio: refs/happy.wav
     ref_text: "transcript of happy ref"
     generate:
       - text: "Great news everyone!"
@@ -261,7 +256,7 @@ steps:
         output: happy2.wav
 
   - mode: voice-clone
-    ref_audio: /work/refs/angry.wav
+    ref_audio: refs/angry.wav
     ref_text: "transcript of angry ref"
     generate:
       - text: "This is unacceptable"
@@ -284,13 +279,13 @@ ssh tts@host "tts get-job-log <uuid-or-prefix>"
 # Follow job log (like tail -f)
 ssh tts@host "tts get-job-log <uuid-or-prefix> -f"
 
-# Cancel a running job
+# Cancel a running or queued job
 ssh tts@host "tts cancel-job <uuid-or-prefix>"
 ```
 
-Job statuses: `pending` → `running` → `completed` | `failed` | `cancelled`
+Job statuses: `queued` → `running` → `completed` | `failed` | `cancelled`
 
-Jobs are ephemeral — automatically cleaned up when completed/failed/cancelled and on container restart. You can use UUID prefixes (e.g. first 8 chars) for convenience.
+Jobs are retained for inspection after completion. Completed jobs are auto-cleaned after 1 day, all jobs after 1 week. You can use UUID prefixes (e.g. first 8 chars) for convenience.
 
 ### Other Subcommands
 
@@ -349,7 +344,7 @@ All of these can be set at any level. Lower levels override higher ones.
 | Field                | Default   | Description                                                         |
 | -------------------- | --------- | ------------------------------------------------------------------- |
 | `dtype`              | `float32` | Model dtype: float32, float16, bfloat16 (float16/bfloat16 GPU only) |
-| `flash_attn`         | `false`   | Use FlashAttention-2 (GPU only)                                     |
+| `flash_attn`         | `auto`    | FlashAttention-2: auto-detects, auto-switches float32→bfloat16      |
 | `temperature`        | `0.9`     | Sampling temperature                                                |
 | `top_k`              | `50`      | Top-k sampling                                                      |
 | `top_p`              | `1.0`     | Top-p / nucleus sampling                                            |
@@ -370,7 +365,7 @@ All of these can be set at any level. Lower levels override higher ones.
 | Field           | Used by                    | Description                                                   |
 | --------------- | -------------------------- | ------------------------------------------------------------- |
 | `text`          | all                        | Text to synthesize (required)                                 |
-| `output`        | all                        | Output file path relative to /work (required)                 |
+| `output`        | all                        | Output file path (required)                                   |
 | `speaker`       | custom-voice               | Speaker name (default: Vivian)                                |
 | `language`      | all                        | Language (default: Auto)                                      |
 | `instruct`      | custom-voice, voice-design | Emotion/style instruction or voice description                |
@@ -380,13 +375,13 @@ All of these can be set at any level. Lower levels override higher ones.
 
 ## File Operations
 
-All file paths are relative to /work. Traversal attempts get blocked, absolute paths get remapped under /work.
+All paths are relative to the work directory. Traversal attempts are blocked.
 
 | Command                      | Description                                             |
 | ---------------------------- | ------------------------------------------------------- |
 | `put <path>`                 | Upload file from stdin                                  |
 | `get <path>`                 | Download file to stdout                                 |
-| `list-files [path] [--json]` | List /work or a subdirectory (`--json` for JSON output) |
+| `list-files [path] [--json]` | List directory (`--json` for JSON output)               |
 | `remove-file <path>`         | Delete a file                                           |
 | `create-dir <path>`          | Create directory (recursive)                            |
 | `remove-dir <path>`          | Remove empty directory                                  |
@@ -397,8 +392,16 @@ All file paths are relative to /work. Traversal attempts get blocked, absolute p
 | `file-exists <path>`         | Check if file exists (prints true/false)                |
 | `file-hash <path>`           | SHA-256 hash of a file                                  |
 | `disk-usage [path]`          | Total bytes used by file or directory tree              |
-| `search-files <pattern>`     | Glob search under /work (supports `**` recursive)       |
+| `search-files <pattern>`     | Glob search (supports `**` recursive)                   |
 | `append-file <path>`         | Append stdin to an existing file                        |
+
+## Environment Variables
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `PROCESSING_UNIT` | `cpu` | Device: `cpu` or `cuda` |
+| `TTS_LOG_RETENTION` | `7d` | Log retention duration (`s`, `m`, `h`, `d`, `w` suffixes) |
+| `TTS_MAX_QUEUE` | `50` | Max queued + running jobs before rejecting new submissions |
 
 ## SSH Client Config
 

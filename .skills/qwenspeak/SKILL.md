@@ -3,7 +3,7 @@ name: qwenspeak
 description: Text-to-speech generation via Qwen3-TTS over SSH. Preset voices, voice cloning, voice design. Use when the user wants to generate speech audio, clone voices, or work with TTS.
 compatibility: Requires ssh and a running qwenspeak instance. QWENSPEAK_HOST and QWENSPEAK_PORT env vars must be set.
 metadata:
-  version: 1.2.0
+  version: 1.4.0
   author: psyb0t
   homepage: https://github.com/psyb0t/docker-qwenspeak
 ---
@@ -33,7 +33,7 @@ scripts/qwenspeak.sh <command> > output_file
 
 ## TTS Generation
 
-Jobs run asynchronously. Submit YAML, get a job UUID back immediately, poll for progress.
+Jobs run asynchronously with a sequential queue. Submit YAML, get a job UUID back immediately, poll for progress. Only one pipeline runs at a time — additional submissions queue up (max 50 by default, `TTS_MAX_QUEUE` env var).
 
 ```bash
 # Get the YAML template
@@ -41,7 +41,7 @@ scripts/qwenspeak.sh "tts print-yaml" > job.yaml
 
 # Submit job (returns JSON with job ID immediately)
 scripts/qwenspeak.sh "tts" < job.yaml
-# {"id": "550e8400-...", "status": "pending", "total_steps": 3, "total_generations": 7}
+# {"id": "550e8400-...", "status": "queued", "total_steps": 3, "total_generations": 7}
 
 # Check progress
 scripts/qwenspeak.sh "tts get-job 550e8400"
@@ -92,7 +92,7 @@ steps:
 
   - mode: voice-clone
     model_size: 1.7b
-    ref_audio: /work/ref.wav
+    ref_audio: ref.wav
     ref_text: "Transcript of reference"
     generate:
       - text: "First line in cloned voice"
@@ -122,14 +122,14 @@ scripts/qwenspeak.sh "put refs/angry.wav" < me_angry.wav
 ```yaml
 steps:
   - mode: voice-clone
-    ref_audio: /work/refs/happy.wav
+    ref_audio: refs/happy.wav
     ref_text: "transcript of happy ref"
     generate:
       - text: "Great news everyone!"
         output: happy1.wav
 
   - mode: voice-clone
-    ref_audio: /work/refs/angry.wav
+    ref_audio: refs/angry.wav
     ref_text: "transcript of angry ref"
     generate:
       - text: "This is unacceptable"
@@ -152,13 +152,13 @@ scripts/qwenspeak.sh "tts get-job-log <uuid-or-prefix>"
 # Follow job log (like tail -f)
 scripts/qwenspeak.sh "tts get-job-log <uuid-or-prefix> -f"
 
-# Cancel a running job (kills the worker process immediately)
+# Cancel a running or queued job
 scripts/qwenspeak.sh "tts cancel-job <uuid-or-prefix>"
 ```
 
-Job statuses: `pending` → `running` → `completed` | `failed` | `cancelled`
+Job statuses: `queued` → `running` → `completed` | `failed` | `cancelled`
 
-Jobs are ephemeral — cleaned up when completed/failed/cancelled and on container restart.
+Jobs are retained after completion. Completed jobs auto-cleaned after 1 day, all jobs after 1 week.
 
 ## Other Commands
 
@@ -177,7 +177,7 @@ scripts/qwenspeak.sh "tts tokenize input.wav"
 
 ## File Operations
 
-All paths relative to `/work`. Traversal blocked.
+All paths are relative to the work directory. Traversal blocked.
 
 | Command                | Description                          | Example                                                         |
 | ---------------------- | ------------------------------------ | --------------------------------------------------------------- |
@@ -218,7 +218,7 @@ All settings can be set at global, step, or generation level. Lower levels overr
 | Field                | Default   | Description                                                  |
 | -------------------- | --------- | ------------------------------------------------------------ |
 | `dtype`              | `float32` | Model dtype: float32, float16, bfloat16 (float16/bfloat16 GPU only) |
-| `flash_attn`         | `false`   | Use FlashAttention-2 (GPU only)                              |
+| `flash_attn`         | `auto`    | FlashAttention-2: auto-detects, auto-switches float32→bfloat16 |
 | `temperature`        | `0.9`     | Sampling temperature                                         |
 | `top_k`              | `50`      | Top-k sampling                                               |
 | `top_p`              | `1.0`     | Top-p / nucleus sampling                                     |
@@ -229,7 +229,7 @@ All settings can be set at global, step, or generation level. Lower levels overr
 | `mode`               | required  | Step only: `custom-voice`, `voice-design`, or `voice-clone`  |
 | `model_size`         | `1.7b`    | Step only: `1.7b` or `0.6b`                                 |
 | `text`               | required  | Text to synthesize                                           |
-| `output`             | required  | Output file path (relative to /work)                         |
+| `output`             | required  | Output file path                                             |
 | `speaker`            | `Vivian`  | custom-voice: speaker name                                   |
 | `language`           | `Auto`    | Language for synthesis                                       |
 | `instruct`           | -         | custom-voice: emotion/style; voice-design: voice description |

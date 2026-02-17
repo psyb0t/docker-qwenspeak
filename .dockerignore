@@ -2,3 +2,6 @@
 .git
 *.wav
 *.mp3
+*.bak
+__pycache__
+*.pyc

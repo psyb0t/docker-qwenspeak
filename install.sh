@@ -23,6 +23,8 @@ if [ ! -f "$QWENSPEAK_HOME/.env" ]; then
 QWENSPEAK_PORT=2222
 QWENSPEAK_MODELS_DIR=$QWENSPEAK_HOME/models
 QWENSPEAK_LOGS_DIR=$QWENSPEAK_HOME/logs
+QWENSPEAK_LOG_RETENTION=7d
+QWENSPEAK_MAX_QUEUE=50
 QWENSPEAK_PROCESSING_UNIT=cpu
 QWENSPEAK_GPUS=all
 QWENSPEAK_CPUS=0
@@ -40,6 +42,8 @@ services:
     environment:
       - LOCKBOX_UID=${REAL_UID}
       - LOCKBOX_GID=${REAL_GID}
+      - TTS_LOG_RETENTION=\${QWENSPEAK_LOG_RETENTION:-7d}
+      - TTS_MAX_QUEUE=\${QWENSPEAK_MAX_QUEUE:-50}
       - PROCESSING_UNIT=\${QWENSPEAK_PROCESSING_UNIT:-cpu}
     volumes:
       - ./authorized_keys:/etc/lockbox/authorized_keys:ro
@@ -95,6 +99,12 @@ compose() {
     docker compose --env-file "$ENV_FILE" -f "$QWENSPEAK_HOME/docker-compose.yml" $overlay "$@"
 }
 
+set_env() {
+    local key="$1" val="$2"
+    sed -i "/^${key}=/d" "$ENV_FILE"
+    echo "${key}=${val}" >> "$ENV_FILE"
+}
+
 # Convert size string (e.g. 4g, 512m) to bytes
 to_bytes() {
     local val="$1"
@@ -116,14 +126,12 @@ compute_memswap() {
     local swap="$QWENSPEAK_SWAP"
 
     if [ "$mem" = "0" ] || [ -z "$mem" ]; then
-        sed -i '/^QWENSPEAK_MEMSWAP=/d' "$ENV_FILE"
-        echo "QWENSPEAK_MEMSWAP=0" >> "$ENV_FILE"
+        set_env QWENSPEAK_MEMSWAP 0
         return
     fi
 
     if [ "$swap" = "0" ] || [ -z "$swap" ]; then
-        sed -i '/^QWENSPEAK_MEMSWAP=/d' "$ENV_FILE"
-        echo "QWENSPEAK_MEMSWAP=$mem" >> "$ENV_FILE"
+        set_env QWENSPEAK_MEMSWAP "$mem"
         return
     fi
 
@@ -132,18 +140,19 @@ compute_memswap() {
     swap_bytes=$(to_bytes "$swap")
     total=$(( mem_bytes + swap_bytes ))
 
-    sed -i '/^QWENSPEAK_MEMSWAP=/d' "$ENV_FILE"
-    echo "QWENSPEAK_MEMSWAP=$total" >> "$ENV_FILE"
+    set_env QWENSPEAK_MEMSWAP "$total"
 }
 
 usage() {
     echo "Usage: qwenspeak <command>"
     echo ""
     echo "Commands:"
-    echo "  start [-d] [--port PORT] [-m MODELS_DIR] [-l LOGS_DIR] [--processing-unit UNIT] [--gpus GPUS] [--cpus CPUS] [--memory MEMORY] [--swap SWAP]"
+    echo "  start [-d] [--port PORT] [-m MODELS_DIR] [-l LOGS_DIR] [--log-retention LOG_RETENTION] [--max-queue MAX_QUEUE] [--processing-unit UNIT] [--gpus GPUS] [--cpus CPUS] [--memory MEMORY] [--swap SWAP]"
     echo "                        Start qwenspeak (-d for detached)"
     echo "                        -m  Models directory"
     echo "                        -l  Logs directory"
+    echo "                        --log-retention  Log retention duration (e.g. 7d, 24h, 1w)"
+    echo "                        --max-queue  Maximum queued TTS jobs"
     echo "                        --processing-unit  Processing unit (cpu, cuda, rocm)"
     echo "                        --gpus  GPUs to expose (all, 0, 0,1, etc.)"
     echo "                        --cpus  CPU limit (e.g. 4, 0.5) - 0 = unlimited"
@@ -163,14 +172,16 @@ case "${1:-}" in
         while [ $# -gt 0 ]; do
             case "$1" in
                 -d) DETACHED=true ;;
-                --port) shift; sed -i "s/^QWENSPEAK_PORT=.*/QWENSPEAK_PORT=$1/" "$ENV_FILE" ;;
-                -m) shift; sed -i "s|^QWENSPEAK_MODELS_DIR=.*|QWENSPEAK_MODELS_DIR=$1|" "$ENV_FILE" ;;
-                -l) shift; sed -i "s|^QWENSPEAK_LOGS_DIR=.*|QWENSPEAK_LOGS_DIR=$1|" "$ENV_FILE" ;;
-                --processing-unit) shift; sed -i "s|^QWENSPEAK_PROCESSING_UNIT=.*|QWENSPEAK_PROCESSING_UNIT=$1|" "$ENV_FILE" ;;
-                --gpus) shift; sed -i "s|^QWENSPEAK_GPUS=.*|QWENSPEAK_GPUS=$1|" "$ENV_FILE" ;;
-                --cpus) shift; sed -i "s/^QWENSPEAK_CPUS=.*/QWENSPEAK_CPUS=$1/" "$ENV_FILE" ;;
-                --memory) shift; sed -i "s/^QWENSPEAK_MEMORY=.*/QWENSPEAK_MEMORY=$1/" "$ENV_FILE" ;;
-                --swap) shift; sed -i "s/^QWENSPEAK_SWAP=.*/QWENSPEAK_SWAP=$1/" "$ENV_FILE" ;;
+                --port) shift; set_env QWENSPEAK_PORT "$1" ;;
+                -m) shift; set_env QWENSPEAK_MODELS_DIR "$1" ;;
+                -l) shift; set_env QWENSPEAK_LOGS_DIR "$1" ;;
+                --log-retention) shift; set_env QWENSPEAK_LOG_RETENTION "$1" ;;
+                --max-queue) shift; set_env QWENSPEAK_MAX_QUEUE "$1" ;;
+                --processing-unit) shift; set_env QWENSPEAK_PROCESSING_UNIT "$1" ;;
+                --gpus) shift; set_env QWENSPEAK_GPUS "$1" ;;
+                --cpus) shift; set_env QWENSPEAK_CPUS "$1" ;;
+                --memory) shift; set_env QWENSPEAK_MEMORY "$1" ;;
+                --swap) shift; set_env QWENSPEAK_SWAP "$1" ;;
             esac
             shift
         done

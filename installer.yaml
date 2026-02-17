@@ -14,3 +14,15 @@ volumes:
     default: ./logs
     description: Logs directory
 
+environment:
+  - flag: --log-retention
+    env: LOG_RETENTION
+    container_env: TTS_LOG_RETENTION
+    default: 7d
+    description: Log retention duration (e.g. 7d, 24h, 1w)
+  - flag: --max-queue
+    env: MAX_QUEUE
+    container_env: TTS_MAX_QUEUE
+    default: 50
+    description: Maximum queued TTS jobs
+

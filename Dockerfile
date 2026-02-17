@@ -35,13 +35,13 @@ VOLUME /var/log/tts
 RUN mkdir -p /jobs && chmod 777 /jobs
 
 # App
-COPY tts.py /app/tts.py
+COPY tts/ /app/tts/
 RUN cat <<'EOF' > /usr/local/bin/tts && chmod +x /usr/local/bin/tts
 #!/usr/bin/python3
 import os, sys
 os.chdir("/work")
 sys.path.insert(0, "/app")
-from tts import main
+from tts.cli import main
 main()
 EOF
 
@@ -55,3 +55,4 @@ ENV PROCESSING_UNIT=cpu
 ENV NVIDIA_VISIBLE_DEVICES=all
 ENV NVIDIA_DRIVER_CAPABILITIES=compute,utility
 ENV CUDA_MODULE_LOADING=LAZY
+ENV TTS_MAX_QUEUE=50

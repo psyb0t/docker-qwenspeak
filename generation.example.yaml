@@ -4,7 +4,7 @@
 # Global settings (apply to all steps unless overridden)
 dtype: float32             # float32, float16, bfloat16 (float16/bfloat16 GPU only)
 models_dir: /models
-flash_attn: false          # FlashAttention-2 (GPU only)
+flash_attn: auto           # auto-detects; set true/false to override
 
 # Generation defaults (override per-step or per-generation)
 temperature: 0.9
@@ -41,7 +41,7 @@ steps:
   # --- voice-clone: clone a voice from reference audio ---
   - mode: voice-clone
     model_size: 1.7b       # 1.7b or 0.6b
-    ref_audio: /work/ref.wav        # step default (prompt reuse when shared)
+    ref_audio: ref.wav              # step default (prompt reuse when shared)
     ref_text: "Transcript of ref"   # required unless x_vector_only
     language: Auto
     generate:
@@ -50,6 +50,6 @@ steps:
       - text: "Second line"
         output: clone2.wav
       - text: "Different reference"
-        ref_audio: /work/other.wav  # override ref for this one
+        ref_audio: other.wav        # override ref for this one
         x_vector_only: true         # no transcript needed
         output: clone3.wav
