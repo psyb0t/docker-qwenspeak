@@ -1,6 +1,6 @@
 FROM nvidia/cuda:12.6.3-cudnn-runtime-ubuntu24.04 AS cuda-runtime
 
-FROM psyb0t/lockbox:v2.1.3
+FROM psyb0t/lockbox:v2.1.4
 
 # CUDA runtime + cuDNN libs
 COPY --from=cuda-runtime /usr/local/cuda/lib64/ /usr/local/cuda/lib64/
