@@ -18,10 +18,18 @@ RUN apt-get update && \
         ffmpeg \
     && apt-get clean && rm -rf /var/lib/apt/lists/*
 
-# Python deps
-COPY requirements.txt /tmp/requirements.txt
-RUN pip3 install --no-cache-dir --break-system-packages -r /tmp/requirements.txt && \
-    rm /tmp/requirements.txt
+# Python deps — one per layer to stay under Docker Hub
+# blob upload limits
+RUN pip3 install --no-cache-dir --break-system-packages \
+    --extra-index-url https://download.pytorch.org/whl/cu126 \
+    torch
+RUN pip3 install --no-cache-dir --break-system-packages \
+    --extra-index-url https://download.pytorch.org/whl/cu126 \
+    torchaudio
+RUN pip3 install --no-cache-dir --break-system-packages \
+    qwen-tts==0.1.1
+RUN pip3 install --no-cache-dir --break-system-packages \
+    soundfile numpy pyyaml
 
 # Flash Attention 2 (prebuilt wheel: cu126, torch 2.10, python 3.12, x86_64)
 RUN pip3 install --no-cache-dir --break-system-packages \
