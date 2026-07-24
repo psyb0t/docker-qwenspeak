@@ -5,3 +5,6 @@
 *.bak
 __pycache__
 *.pyc
+
+# Agent skill dir (published to ClawHub, not needed in the image)
+.agents/

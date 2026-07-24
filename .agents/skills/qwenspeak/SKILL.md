@@ -13,6 +13,24 @@ YAML-driven text-to-speech over SSH using Qwen3-TTS models.
 
 For installation and deployment, see [references/setup.md](references/setup.md).
 
+## Security model
+
+qwenspeak is **not** a general-purpose shell. The instance runs inside a
+[lockbox](https://github.com/psyb0t/docker-lockbox)-hardened container, and this
+skill only ever talks to an instance you (or your operator) already run and trust:
+
+- **Key-auth only** — SSH accepts public-key auth only (no passwords), connecting
+  as a restricted `tts@` user. There is no interactive shell and no PTY.
+- **Fixed command set** — the SSH channel dispatches only the `tts` command plus
+  lockbox's built-in, scoped file operations (the tables below). Anything else is
+  refused; the remote never spawns a shell, so there is no command-injection surface.
+- **Work-dir confined** — every file path resolves under the instance work
+  directory; traversal is blocked. The sandbox cannot read or write your host
+  filesystem.
+- **Consumer-only** — this skill submits TTS jobs and moves files to/from a
+  running instance. It never provisions, escalates, or installs anything on your
+  machine (server setup is a separate, operator-side step — see setup.md).
+
 ## SSH Wrapper
 
 Use `scripts/qwenspeak.sh` for all commands. It handles host, port, and host key acceptance via `QWENSPEAK_HOST` and `QWENSPEAK_PORT` env vars.
