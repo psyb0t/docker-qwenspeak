@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## [v1.4.11] - 2026-07-27
+
+### Fixed
+
+- The Codex subsection of the README's "Agent integrations" section was missing its
+  install command. It now reads `codex plugin add qwenspeak@psyb0t` after the
+  marketplace-add step, matching the Claude Code subsection above it.
+- Clarified that the skill's invocation form depends on how it was picked up:
+  installed via the marketplace it's `$qwenspeak:qwenspeak`, while Codex's automatic
+  pickup from a repo's own `.agents/skills/` (no install needed) invokes it as plain
+  `$qwenspeak`.
+
 ## [v1.4.10] - 2026-07-27
 
 ### Added

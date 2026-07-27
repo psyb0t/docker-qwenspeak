@@ -1,6 +1,6 @@
 {
   "name": "qwenspeak",
-  "version": "1.4.10",
+  "version": "1.4.11",
   "description": "Self-hosted text-to-speech via Qwen3-TTS models over SSH — preset voices, voice cloning, and voice design",
   "author": { "name": "psyb0t", "url": "https://github.com/psyb0t" },
   "homepage": "https://github.com/psyb0t/docker-qwenspeak",
