@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [v1.4.10] - 2026-07-27
+
+### Added
+
+- Added `.agents/.claude-plugin/plugin.json` and `.agents/.codex-plugin/plugin.json`
+  so the existing `qwenspeak` skill installs natively as a plugin in Claude Code and
+  Codex.
+- Added an "Agent integrations" section to the README with the install commands for
+  Claude Code, Codex, and the OpenClaw skill.
+
 ## [v1.4.9] - 2026-07-27
 
 ### Added

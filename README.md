@@ -417,6 +417,39 @@ Host tts
 
 Then just: `ssh tts "tts list-speakers"`
 
+## Agent integrations
+
+The [skill](.agents/skills/qwenspeak) works in any agent that reads `.agents/skills/`, and
+installs natively in the clients below.
+
+### Claude Code
+
+```bash
+claude plugin marketplace add psyb0t/agents
+claude plugin install qwenspeak@psyb0t
+```
+
+Claude Code prompts for the qwenspeak host and SSH port at enable time (exported as
+`QWENSPEAK_HOST` / `QWENSPEAK_PORT` for the skill's SSH wrapper). Auth itself stays
+SSH public-key only — there's no token to enter.
+
+### Codex
+
+```bash
+codex plugin marketplace add psyb0t/agents
+```
+
+Codex also picks the skill up automatically in any repo containing `.agents/skills/`, and
+invokes it as `$qwenspeak`.
+
+### OpenClaw
+
+The skill is published to ClawHub on every release:
+
+```bash
+openclaw skills install @psyb0t/qwenspeak
+```
+
 ## Memory
 
 - **0.6B float32**: ~2.4GB weights + overhead - fits in 4GB
