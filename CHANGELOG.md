@@ -2,6 +2,24 @@
 
 All notable changes to this project will be documented in this file.
 
+## [v1.4.12] - 2026-08-01
+
+CI plumbing only. No code in this repo changed — every commit in this release
+touches `.github/workflows/`.
+
+### Changed
+
+- The pipeline was split: building and publishing stay in `pipeline.yml`, and
+  everything that leaves the host now lives beside it in
+  `mirror-and-archive.yml`.
+- The repo is mirrored to Codeberg as well as GitLab.
+- It is archived to the Wayback Machine, Software Heritage and archive.org.
+- Issues opened on either mirror are copied back to GitHub every six hours, and
+  closed here when the original closes.
+- Pull requests are switched off on the mirrors — they are force-pushed from
+  GitHub, so anything merged there would be destroyed by the next sync. Issues
+  and forking stay enabled.
+
 ## [v1.4.11] - 2026-07-27
 
 ### Fixed
