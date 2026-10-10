@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [v1.4.13], 2026-10-10
+
+Documentation only.
+
+### Changed
+
+- The README's agent integrations section names [peen](https://github.com/psyb0t/peen) as an example of an agent that reads `.agents/skills/`.
+
 ## [v1.4.12] - 2026-08-01
 
 CI plumbing only. No code in this repo changed — every commit in this release
